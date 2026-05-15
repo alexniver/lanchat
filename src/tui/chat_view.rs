@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::state::AppState;
+use crate::state::{AppState, ChatMessage};
 use crate::tui::app::UiState;
 
 /// 渲染聊天视图
@@ -43,25 +43,31 @@ fn render_messages(f: &mut Frame, area: Rect, state: &AppState, ui: &UiState) {
 
     let lines: Vec<Line> = msgs[start..end]
         .iter()
-        .flat_map(|msg| {
-            vec![
-                // 时间戳 + 发送者名
-                {
-                    let meta = format!(
-                        "[{}] {}",
-                        format_timestamp(&msg.timestamp),
-                        msg.from_name
-                    );
-                    let style = if msg.from_node_id == state.local_node.node_id {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default().fg(Color::Yellow)
-                    };
-                    Line::styled(meta, style)
-                },
-                // 消息内容
-                Line::from(Span::raw(&msg.content)),
-            ]
+        .flat_map(|msg| match msg {
+            ChatMessage::System { content, timestamp } => {
+                let meta = format!("[{}] {}", format_timestamp(timestamp), content);
+                vec![Line::styled(meta, Style::default().fg(Color::Gray))]
+            }
+            ChatMessage::User(chat) => {
+                vec![
+                    // 时间戳 + 发送者名
+                    {
+                        let meta = format!(
+                            "[{}] {}",
+                            format_timestamp(&chat.timestamp),
+                            chat.from_name
+                        );
+                        let style = if chat.from_node_id == state.local_node.node_id {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default().fg(Color::Yellow)
+                        };
+                        Line::styled(meta, style)
+                    },
+                    // 消息内容
+                    Line::from(Span::raw(&chat.content)),
+                ]
+            }
         })
         .collect();
 
@@ -77,18 +83,21 @@ fn render_input(f: &mut Frame, area: Rect, ui: &UiState) {
         .title(" 输入 ");
     let inner = block_border.inner(area);
 
-    // 光标位置视觉
+    // 光标位置视觉（input_cursor 是 UTF-8 字节位置，始终在字符边界上）
     let text = if ui.input.is_empty() {
         // 空输入时显示光标占位符
         Line::from(Span::styled("▌", Style::default().fg(Color::White)))
     } else {
         let cursor = ui.input_cursor.min(ui.input.len());
         let before = &ui.input[..cursor];
-        let at = ui.input.chars().nth(cursor).unwrap_or(' ');
-        let after = if cursor < ui.input.len() {
-            &ui.input[cursor + 1..]
+
+        // 获取光标位置的字符及其字节长度
+        let (at, after) = if cursor < ui.input.len() {
+            let ch = ui.input[cursor..].chars().next().unwrap();
+            let ch_len = ch.len_utf8();
+            (ch, &ui.input[cursor + ch_len..])
         } else {
-            ""
+            (' ', "")
         };
 
         let mut spans = vec![Span::raw(before.to_string())];

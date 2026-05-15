@@ -31,6 +31,8 @@ pub struct UiState {
     pub files_node_idx: usize,
     /// 文件视图 — 右栏选中文件索引
     pub files_file_idx: usize,
+    /// 上次渲染时的消息总数（用于检测新消息并调整滚动）
+    pub last_message_count: usize,
 }
 
 impl UiState {
@@ -42,34 +44,47 @@ impl UiState {
             input_cursor: 0,
             files_node_idx: 0,
             files_file_idx: 0,
+            last_message_count: 0,
         }
     }
 
-    /// 将输入框光标向左移动
+    /// 将输入框光标向左移动（按 UTF-8 字符边界）
     pub fn cursor_left(&mut self) {
         if self.input_cursor > 0 {
-            self.input_cursor -= 1;
+            let mut pos = self.input_cursor - 1;
+            while pos > 0 && !self.input.is_char_boundary(pos) {
+                pos -= 1;
+            }
+            self.input_cursor = pos;
         }
     }
 
-    /// 将输入框光标向右移动
+    /// 将输入框光标向右移动（按 UTF-8 字符边界）
     pub fn cursor_right(&mut self) {
         if self.input_cursor < self.input.len() {
-            self.input_cursor += 1;
+            let mut pos = self.input_cursor + 1;
+            while pos < self.input.len() && !self.input.is_char_boundary(pos) {
+                pos += 1;
+            }
+            self.input_cursor = pos;
         }
     }
 
-    /// 在光标位置插入字符
+    /// 在光标位置插入字符（input_cursor 为字节位置，始终在 UTF-8 字符边界上）
     pub fn input_insert(&mut self, ch: char) {
         self.input.insert(self.input_cursor, ch);
-        self.input_cursor += 1;
+        self.input_cursor += ch.len_utf8();
     }
 
     /// 删除光标前一个字符（Backspace）
     pub fn input_backspace(&mut self) {
         if self.input_cursor > 0 {
-            self.input_cursor -= 1;
-            self.input.remove(self.input_cursor);
+            let mut pos = self.input_cursor - 1;
+            while pos > 0 && !self.input.is_char_boundary(pos) {
+                pos -= 1;
+            }
+            self.input.remove(pos);
+            self.input_cursor = pos;
         }
     }
 

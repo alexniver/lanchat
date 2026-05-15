@@ -15,7 +15,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 dirs = "6"
 libc = "0.2"
-mdns-sd = "0.11"
+mdns-sd = "0.19"
 sha2 = "0.10"
 base64 = "0.22"
 ratatui = "0.29"

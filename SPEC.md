@@ -475,6 +475,8 @@ TUI input      → app_tx: mpsc   传递"用户操作"事件
 **Phase 5 - 聊天实现**
 `network/chat`：聊天实现 
 当发现新的连接时，在聊天框显示：xxx已连接， 当有连接退出时，显示：xxx已退出
+客户端发送聊天信息时，同步聊天信息到所有其他连接的客户端
+聊天信息不需要显示历史记录
 
 **Phase 6 - 文件功能**
 1. `network/files`：扫描、sha256、FileListRequest/Response 处理

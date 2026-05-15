@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub identity: Identity,
     /// TCP 监听端口
     pub port: u16,
+    /// 自定义身份文件路径
+    pub identity_path: Option<PathBuf>,
 }
 
 /// 加载或创建 identity 文件
@@ -96,6 +98,7 @@ pub fn ensure_local_share_dir() -> anyhow::Result<PathBuf> {
 pub fn parse_args() -> AppConfig {
     let args: Vec<String> = std::env::args().collect();
     let mut port: u16 = 47731;
+    let mut identity_path: Option<PathBuf> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -111,6 +114,12 @@ pub fn parse_args() -> AppConfig {
                     i += 1;
                 }
             }
+            "--identity" => {
+                if i + 1 < args.len() {
+                    identity_path = Some(PathBuf::from(&args[i + 1]));
+                    i += 1;
+                }
+            }
             "--name" => {
                 // --name 将在后续版本用于覆盖 display_name
                 if i + 1 < args.len() {
@@ -123,22 +132,43 @@ pub fn parse_args() -> AppConfig {
     }
 
     // 加载或创建 identity
-    let identity = load_or_create_identity()
-        .unwrap_or_else(|e| {
+    let identity = if let Some(ref path) = identity_path {
+        load_identity_from_path(path).unwrap_or_else(|e| {
+            eprintln!("警告：无法加载身份文件 {}: {}", path.display(), e);
+            load_or_create_identity_fallback()
+        })
+    } else {
+        load_or_create_identity().unwrap_or_else(|e| {
             eprintln!("警告：无法加载/创建身份配置: {}", e);
-            // 回退：使用临时 UUID
-            Identity {
-                node_id: uuid::Uuid::new_v4().to_string(),
-                display_name: format!(
-                    "{}@{}",
-                    whoami::username(),
-                    hostname::get()
-                        .ok()
-                        .and_then(|h| h.into_string().ok())
-                        .unwrap_or_else(|| "unknown".to_string())
-                ),
-            }
-        });
+            load_or_create_identity_fallback()
+        })
+    };
 
-    AppConfig { identity, port }
+    AppConfig { identity, port, identity_path }
+}
+
+fn load_or_create_identity_fallback() -> Identity {
+    Identity {
+        node_id: uuid::Uuid::new_v4().to_string(),
+        display_name: format!(
+            "{}@{}",
+            whoami::username(),
+            hostname::get()
+                .ok()
+                .and_then(|h| h.into_string().ok())
+                .unwrap_or_else(|| "unknown".to_string())
+        ),
+    }
+}
+
+fn load_identity_from_path(path: &PathBuf) -> anyhow::Result<Identity> {
+    let content = fs::read_to_string(path)?;
+    let identity: Identity = serde_json::from_str(&content)?;
+    tracing::info!(
+        "已从 {} 加载节点身份: {} ({})",
+        path.display(),
+        identity.display_name,
+        identity.node_id
+    );
+    Ok(identity)
 }

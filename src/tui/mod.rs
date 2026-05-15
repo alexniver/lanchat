@@ -18,15 +18,14 @@ use ratatui::{
 };
 use tokio::sync::mpsc;
 
-use crate::protocol::Message;
+use crate::network::AppEvent;
 use crate::state::AppState;
 use crate::tui::app::{Tab, UiState};
 
 /// TUI 主循环入口：接管终端、循环处理事件和渲染
 pub async fn run(
     state: Arc<Mutex<AppState>>,
-    _app_tx: mpsc::Sender<Message>,
-    _ui_rx: mpsc::Receiver<Message>,
+    app_tx: mpsc::Sender<AppEvent>,
 ) -> anyhow::Result<()> {
     // 进入 raw mode 和 alternate screen
     enable_raw_mode()?;
@@ -38,7 +37,7 @@ pub async fn run(
 
     let mut ui = UiState::new();
 
-    let result = main_loop(&mut terminal, state, &mut ui).await;
+    let result = main_loop(&mut terminal, state, &mut ui, app_tx).await;
 
     // 恢复终端
     disable_raw_mode()?;
@@ -56,11 +55,40 @@ async fn main_loop(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     state: Arc<Mutex<AppState>>,
     ui: &mut UiState,
+    app_tx: mpsc::Sender<AppEvent>,
 ) -> anyhow::Result<()> {
+    let mut frame_count: u64 = 0;
     loop {
         // 渲染
         {
             let app_state = state.lock().unwrap();
+            frame_count += 1;
+
+            // 检测新消息：若用户在翻历史则保持位置，否则自动跟随最新
+            let msg_count = app_state.messages.len();
+            if msg_count > ui.last_message_count {
+                let delta = msg_count - ui.last_message_count;
+                if ui.chat_scroll > 0 {
+                    ui.chat_scroll += delta;
+                }
+                // chat_scroll == 0 时不改，自动跟随底部
+                ui.last_message_count = msg_count;
+            } else if msg_count < ui.last_message_count {
+                // 消息被清空或减少（理论上不应频繁发生），重置
+                ui.last_message_count = msg_count;
+                ui.chat_scroll = 0;
+            }
+
+            // 每 60 帧 (~1s) 输出一次诊断日志，避免文件日志被淹没
+            if frame_count % 60 == 1 {
+                tracing::info!(
+                    "TUI_RENDER frame={}: online_count={}, total_peers={}, peers: {:?}",
+                    frame_count,
+                    app_state.online_count(),
+                    app_state.peers.len(),
+                    app_state.peers.iter().map(|(id, p)| (id, p.online, p.addr)).collect::<Vec<_>>()
+                );
+            }
             terminal.draw(|f| render_ui(f, &app_state, ui))?;
         }
 
@@ -73,6 +101,30 @@ async fn main_loop(
                 match key.code {
                     KeyCode::Char('q') if key.modifiers == KeyModifiers::CONTROL => break,
                     KeyCode::Tab => ui.active_tab = ui.active_tab.toggle(),
+                    KeyCode::Enter if ui.active_tab == Tab::Chat => {
+                        if !ui.input.is_empty() {
+                            let content = std::mem::take(&mut ui.input);
+                            ui.input_cursor = 0;
+                            let _ = app_tx.try_send(AppEvent::SendChat { content });
+                        }
+                    }
+                    KeyCode::Up if ui.active_tab == Tab::Chat => {
+                        let app_state = state.lock().unwrap();
+                        ui.chat_scroll_up(&app_state);
+                    }
+                    KeyCode::Down if ui.active_tab == Tab::Chat => {
+                        ui.chat_scroll_down();
+                    }
+                    KeyCode::PageUp if ui.active_tab == Tab::Chat => {
+                        // 向上滚动多行（约一屏）
+                        for _ in 0..10 {
+                            let app_state = state.lock().unwrap();
+                            ui.chat_scroll_up(&app_state);
+                        }
+                    }
+                    KeyCode::PageDown if ui.active_tab == Tab::Chat => {
+                        ui.chat_scroll_bottom();
+                    }
                     _ => match ui.active_tab {
                         Tab::Chat => handle_chat_key(key.code, ui),
                         Tab::Files => handle_files_key(key.code, ui, &state.lock().unwrap()),
@@ -92,24 +144,6 @@ fn handle_chat_key(code: KeyCode, ui: &mut UiState) {
         KeyCode::Delete => ui.input_delete(),
         KeyCode::Left => ui.cursor_left(),
         KeyCode::Right => ui.cursor_right(),
-        KeyCode::Enter => {
-            // Phase 1: 仅清空输入框，不发送消息
-            ui.input.clear();
-            ui.input_cursor = 0;
-        }
-        KeyCode::Up => {
-            // 上键：消息列表向上滚动
-            // 需要在合适的时机传 state，但在 handle_chat_key 这里我们无法直接获取
-            // 先占位
-        }
-        KeyCode::Down => ui.chat_scroll_down(),
-        KeyCode::PageUp => {
-            // PageUp: 向上滚动多行
-        }
-        KeyCode::PageDown => {
-            // PageDown: 向下滚动
-            ui.chat_scroll_bottom();
-        }
         _ => {}
     }
 }
@@ -175,7 +209,7 @@ fn render_top_bar(f: &mut Frame, area: Rect, state: &AppState, ui: &UiState) {
     f.render_widget(tabs, bar_chunks[0]);
 
     // 右侧：本机节点信息 + 在线数
-    let online_count = state.peers.values().filter(|p| p.online).count();
+    let online_count = state.online_count();
     let info = format!(
         " {} | 在线: {} ",
         state.local_node.display_name, online_count
