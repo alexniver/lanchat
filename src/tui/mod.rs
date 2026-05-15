@@ -64,6 +64,12 @@ async fn main_loop(
             let app_state = state.lock().unwrap();
             frame_count += 1;
 
+            // 确保 files_node_idx 不越界（节点离线被删除后）
+            let max_nodes = 1 + app_state.peers.values().filter(|p| p.online).count();
+            if ui.files_node_idx >= max_nodes {
+                ui.files_node_idx = max_nodes.saturating_sub(1);
+            }
+
             // 检测新消息：若用户在翻历史则保持位置，否则自动跟随最新
             let msg_count = app_state.messages.len();
             if msg_count > ui.last_message_count {
@@ -157,7 +163,7 @@ fn handle_files_key(
     state: &AppState,
     app_tx: &mpsc::Sender<AppEvent>,
 ) {
-    let max_nodes = 1 + state.peers.len();
+    let max_nodes = 1 + state.peers.values().filter(|p| p.online).count();
 
     match code {
         KeyCode::Left => {
@@ -213,7 +219,12 @@ fn get_selected_files<'a>(state: &'a AppState, ui: &UiState) -> Option<&'a Vec<c
     if ui.files_node_idx == 0 {
         Some(&state.local_files)
     } else {
-        let peer_names: Vec<&str> = state.peers.keys().map(|s| s.as_str()).collect();
+        let peer_names: Vec<&str> = state
+            .peers
+            .iter()
+            .filter(|(_, p)| p.online)
+            .map(|(id, _)| id.as_str())
+            .collect();
         let peer_idx = ui.files_node_idx.saturating_sub(1);
         peer_names.get(peer_idx).and_then(|id| state.peer_files.get(*id))
     }
@@ -224,7 +235,12 @@ fn get_selected_node_id(state: &AppState, ui: &UiState) -> String {
     if ui.files_node_idx == 0 {
         state.local_node.node_id.clone()
     } else {
-        let peer_names: Vec<&str> = state.peers.keys().map(|s| s.as_str()).collect();
+        let peer_names: Vec<&str> = state
+            .peers
+            .iter()
+            .filter(|(_, p)| p.online)
+            .map(|(id, _)| id.as_str())
+            .collect();
         let peer_idx = ui.files_node_idx.saturating_sub(1);
         peer_names
             .get(peer_idx)

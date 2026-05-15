@@ -42,34 +42,31 @@ pub fn render_files_view(
 }
 
 fn render_node_list(f: &mut Frame, area: Rect, state: &AppState, ui: &UiState) {
-    // 构建节点列表项
+    // 构建节点列表项：本机 + 在线 peer，离线节点不显示
     let items: Vec<ListItem> = {
-        // 始终先显示本机
         let mut all: Vec<(String, bool)> = Vec::new();
         all.push((state.local_node.display_name.clone(), true));
 
         for peer in state.peers.values() {
-            all.push((peer.display_name.clone(), peer.online));
+            if peer.online {
+                all.push((peer.display_name.clone(), true));
+            }
         }
 
         all.iter()
             .enumerate()
-            .map(|(i, (name, online))| {
-                let icon = if *online { "●" } else { "○" };
+            .map(|(i, (name, _online))| {
                 let label = if i == 0 {
-                    format!("{} {} (本机)", icon, name)
-                } else if !online {
-                    format!("{} {} (离线)", icon, name)
+                    format!("● {} (本机)", name)
                 } else {
-                    format!("{} {}", icon, name)
+                    format!("● {}", name)
                 };
 
                 let is_selected = i == ui.files_node_idx && !ui.files_focus_right;
                 if is_selected {
                     ListItem::new(label).style(Style::default().fg(Color::Black).bg(Color::White))
                 } else {
-                    let color = if *online { Color::Green } else { Color::DarkGray };
-                    ListItem::new(label).style(Style::default().fg(color))
+                    ListItem::new(label).style(Style::default().fg(Color::Green))
                 }
             })
             .collect()

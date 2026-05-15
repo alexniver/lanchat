@@ -252,14 +252,14 @@ async fn event_handler(
                     tracing::info!("一个 peer 连接断开");
                 } else {
                     tracing::info!("节点断开: {}", node_id);
-                    // 获取显示名再标记离线
+                    // 获取显示名后彻底删除节点（含 peer_files）
                     let name = state
                         .lock()
                         .unwrap()
                         .peers
                         .get(&node_id)
                         .map(|p| p.display_name.clone());
-                    state.lock().unwrap().mark_peer_offline(&node_id);
+                    state.lock().unwrap().remove_peer(&node_id);
                     if let Some(name) = name {
                         state.lock().unwrap().messages.push(ChatMessage::System {
                             content: format!("{} 已断开", name),

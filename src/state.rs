@@ -101,15 +101,7 @@ impl AppState {
         }
     }
 
-    /// 标记 peer 为离线
-    pub fn mark_peer_offline(&mut self, node_id: &str) {
-        if let Some(p) = self.peers.get_mut(node_id) {
-            p.online = false;
-            p.tx = None;
-        }
-    }
-
-    /// 彻底移除 peer（从 HashMap 中删除）
+    /// 彻底移除 peer（从 HashMap 中删除，含文件列表）
     pub fn remove_peer(&mut self, node_id: &str) {
         self.peers.remove(node_id);
         self.peer_files.remove(node_id);
