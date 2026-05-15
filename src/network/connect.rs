@@ -103,6 +103,8 @@ pub async fn connect_and_handshake(
                                 hello.node_id
                             );
 
+                            let peer_node_id = hello.node_id.clone();
+
                             app_tx
                                 .send(AppEvent::Message {
                                     msg: Message::Hello(hello),
@@ -116,6 +118,7 @@ pub async fn connect_and_handshake(
                                     peer::handle_connection_already_hello(
                                         stream,
                                         addr,
+                                        peer_node_id,
                                         peer_rx,
                                         app_tx,
                                     )

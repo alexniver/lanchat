@@ -131,6 +131,7 @@ pub async fn handle_connection(
 pub async fn handle_connection_already_hello(
     stream: TcpStream,
     addr: SocketAddr,
+    peer_node_id: String,
     peer_rx: mpsc::Receiver<Message>,
     app_tx: mpsc::Sender<AppEvent>,
 ) -> anyhow::Result<()> {
@@ -158,7 +159,7 @@ pub async fn handle_connection_already_hello(
 
     let _ = app_tx
         .send(AppEvent::PeerDisconnected {
-            node_id: String::new(),
+            node_id: peer_node_id,
         })
         .await;
 
