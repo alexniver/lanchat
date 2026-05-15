@@ -127,7 +127,10 @@ async fn main_loop(
                     }
                     _ => match ui.active_tab {
                         Tab::Chat => handle_chat_key(key.code, ui),
-                        Tab::Files => handle_files_key(key.code, ui, &state.lock().unwrap()),
+                        Tab::Files => {
+                            let s = state.lock().unwrap();
+                            handle_files_key(key.code, ui, &s, &app_tx);
+                        }
                     },
                 }
             }
@@ -148,20 +151,94 @@ fn handle_chat_key(code: KeyCode, ui: &mut UiState) {
     }
 }
 
-fn handle_files_key(code: KeyCode, ui: &mut UiState, state: &AppState) {
+fn handle_files_key(
+    code: KeyCode,
+    ui: &mut UiState,
+    state: &AppState,
+    app_tx: &mpsc::Sender<AppEvent>,
+) {
     let max_nodes = 1 + state.peers.len();
 
     match code {
-        KeyCode::Up => ui.files_select_up(),
-        KeyCode::Down => ui.files_select_down(max_nodes),
+        KeyCode::Left => {
+            ui.files_focus_right = false;
+        }
+        KeyCode::Right => {
+            ui.files_focus_right = true;
+        }
+        KeyCode::Up => {
+            if ui.files_focus_right {
+                ui.files_file_up();
+            } else {
+                ui.files_select_up();
+            }
+        }
+        KeyCode::Down => {
+            if ui.files_focus_right {
+                // 获取当前选中节点的文件数
+                let max_files = get_selected_file_count(state, ui);
+                ui.files_file_down(max_files);
+            } else {
+                ui.files_select_down(max_nodes);
+            }
+        }
         KeyCode::Enter | KeyCode::Char('s') => {
-            // Phase 1: 触发下载逻辑占位
+            // 仅在右栏焦点时触发下载
+            if ui.files_focus_right {
+                if let Some((node_id, file_name)) = get_selected_file(state, ui) {
+                    let _ = app_tx.try_send(AppEvent::DownloadFile {
+                        node_id,
+                        file_name,
+                    });
+                }
+            }
         }
         KeyCode::Char('r') => {
-            // Phase 1: 刷新文件列表占位
+            // 刷新当前选中节点的文件列表
+            let node_id = get_selected_node_id(state, ui);
+            let _ = app_tx.try_send(AppEvent::RequestFileList { node_id });
         }
         _ => {}
     }
+}
+
+/// 获取当前焦点所在文件栏的文件数量
+fn get_selected_file_count(state: &AppState, ui: &UiState) -> usize {
+    let files = get_selected_files(state, ui);
+    files.map(|f| f.len()).unwrap_or(0)
+}
+
+/// 获取当前选中节点对应的文件列表
+fn get_selected_files<'a>(state: &'a AppState, ui: &UiState) -> Option<&'a Vec<crate::protocol::FileEntry>> {
+    if ui.files_node_idx == 0 {
+        Some(&state.local_files)
+    } else {
+        let peer_names: Vec<&str> = state.peers.keys().map(|s| s.as_str()).collect();
+        let peer_idx = ui.files_node_idx.saturating_sub(1);
+        peer_names.get(peer_idx).and_then(|id| state.peer_files.get(*id))
+    }
+}
+
+/// 获取当前选中节点的 node_id
+fn get_selected_node_id(state: &AppState, ui: &UiState) -> String {
+    if ui.files_node_idx == 0 {
+        state.local_node.node_id.clone()
+    } else {
+        let peer_names: Vec<&str> = state.peers.keys().map(|s| s.as_str()).collect();
+        let peer_idx = ui.files_node_idx.saturating_sub(1);
+        peer_names
+            .get(peer_idx)
+            .map(|id| id.to_string())
+            .unwrap_or_default()
+    }
+}
+
+/// 获取当前选中的文件信息 (node_id, file_name)
+fn get_selected_file(state: &AppState, ui: &UiState) -> Option<(String, String)> {
+    let node_id = get_selected_node_id(state, ui);
+    let files = get_selected_files(state, ui)?;
+    let entry = files.get(ui.files_file_idx)?;
+    Some((node_id, entry.name.clone()))
 }
 
 /// 渲染整个 UI

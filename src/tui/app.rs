@@ -31,6 +31,8 @@ pub struct UiState {
     pub files_node_idx: usize,
     /// 文件视图 — 右栏选中文件索引
     pub files_file_idx: usize,
+    /// 文件视图 — 焦点在右栏（文件列表）而非左栏（节点列表）
+    pub files_focus_right: bool,
     /// 上次渲染时的消息总数（用于检测新消息并调整滚动）
     pub last_message_count: usize,
 }
@@ -44,6 +46,7 @@ impl UiState {
             input_cursor: 0,
             files_node_idx: 0,
             files_file_idx: 0,
+            files_focus_right: false,
             last_message_count: 0,
         }
     }

@@ -1,5 +1,6 @@
 pub mod connect;
 pub mod discovery;
+pub mod files;
 pub mod peer;
 pub mod server;
 
@@ -44,5 +45,14 @@ pub enum AppEvent {
     /// 用户通过 TUI 输入框发送聊天消息
     SendChat {
         content: String,
+    },
+    /// 用户请求刷新某个节点的文件列表
+    RequestFileList {
+        node_id: String,
+    },
+    /// 用户请求下载某个节点的文件
+    DownloadFile {
+        node_id: String,
+        file_name: String,
     },
 }

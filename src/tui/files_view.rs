@@ -64,7 +64,8 @@ fn render_node_list(f: &mut Frame, area: Rect, state: &AppState, ui: &UiState) {
                     format!("{} {}", icon, name)
                 };
 
-                if i == ui.files_node_idx {
+                let is_selected = i == ui.files_node_idx && !ui.files_focus_right;
+                if is_selected {
                     ListItem::new(label).style(Style::default().fg(Color::Black).bg(Color::White))
                 } else {
                     let color = if *online { Color::Green } else { Color::DarkGray };
@@ -114,7 +115,8 @@ fn render_file_list(f: &mut Frame, area: Rect, state: &AppState, ui: &UiState) {
                         entry.name, size_str, status_text
                     );
 
-                    if i == ui.files_file_idx {
+                    let is_file_selected = i == ui.files_file_idx && ui.files_focus_right;
+                    if is_file_selected {
                         ListItem::new(label)
                             .style(Style::default().fg(Color::Black).bg(Color::White))
                     } else {
