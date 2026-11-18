@@ -7,6 +7,9 @@ pub fn bindings() -> Vec<Binding> {
         binding(&["k"], ActionId::CursorUp),
         binding(&["y"], ActionId::CopyBody),
         binding(&["Y"], ActionId::CopyLine),
+        binding(&["space", "u"], ActionId::ToggleMembers),
+        binding(&["space", "r"], ActionId::Reconnect),
+        binding(&["space", "d"], ActionId::Disconnect),
         binding(&["Q"], ActionId::Quit),
     ]
 }

@@ -15,6 +15,7 @@ pub struct Config {
     pub identity: Identity,
     pub history: HistoryConfig,
     pub ui: UiConfig,
+    pub network: NetworkConfig,
     pub warnings: Vec<String>,
 }
 
@@ -50,6 +51,27 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             show_help_hint: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NetworkConfig {
+    pub enabled: bool,
+    pub port: u16,
+    pub mdns: bool,
+    pub reconnect: bool,
+    pub seeds: Vec<String>,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            port: 47_731,
+            mdns: true,
+            reconnect: true,
+            seeds: Vec::new(),
         }
     }
 }
@@ -165,12 +187,27 @@ pub fn load(cli: &Cli) -> Result<Config> {
     let ui = UiConfig {
         show_help_hint: file.ui.show_help_hint.unwrap_or(true),
     };
+    let mut network = NetworkConfig {
+        enabled: file.network.enabled.unwrap_or(true),
+        port: file.network.port.unwrap_or(47_731),
+        mdns: file.network.mdns.unwrap_or(true),
+        reconnect: file.network.reconnect.unwrap_or(true),
+        seeds: file.network.seeds.unwrap_or_default(),
+    };
+    if cli.no_network {
+        network.enabled = false;
+    }
+    if let Some(port) = cli.port {
+        network.port = port;
+    }
+    network.seeds.extend(cli.connect.iter().cloned());
 
     Ok(Config {
         paths,
         identity,
         history,
         ui,
+        network,
         warnings,
     })
 }
@@ -183,6 +220,8 @@ struct ConfigFile {
     history: HistorySection,
     #[serde(default)]
     ui: UiSection,
+    #[serde(default)]
+    network: NetworkSection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -205,6 +244,20 @@ struct HistorySection {
 struct UiSection {
     #[serde(default)]
     show_help_hint: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct NetworkSection {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    port: Option<u16>,
+    #[serde(default)]
+    mdns: Option<bool>,
+    #[serde(default)]
+    reconnect: Option<bool>,
+    #[serde(default)]
+    seeds: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -329,6 +382,21 @@ mod tests {
         let file: IdentityFile =
             serde_json::from_str(r#"{"node_id":"n","display_name":"alice@host"}"#).unwrap();
         assert_eq!(file.name, "alice@host");
+    }
+
+    #[test]
+    fn parses_network_section() {
+        let file: ConfigFile = toml::from_str(
+            "[network]\nenabled = true\nport = 47732\nmdns = false\nreconnect = false\nseeds = [\"127.0.0.1:47731\"]\n",
+        )
+        .unwrap();
+        assert_eq!(file.network.port, Some(47732));
+        assert_eq!(file.network.mdns, Some(false));
+        assert_eq!(file.network.reconnect, Some(false));
+        assert_eq!(
+            file.network.seeds.as_deref(),
+            Some(&["127.0.0.1:47731".to_string()][..])
+        );
     }
 
     #[test]

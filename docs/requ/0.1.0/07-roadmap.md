@@ -1,7 +1,7 @@
 # 0.1.0 实现路线图
 
-> 状态：M0–M3 已实现；P2 可选增强与 0.2 网络未做。核心交互见 [08-core-interaction.md](08-core-interaction.md)
-> 关联：[01-scope.md](01-scope.md) · [04-architecture.md](04-architecture.md) · [05-network.md](05-network.md)（0.2）
+> 状态：M0–M3 已实现；P2 可选增强与 0.1.1 网络未做。核心交互见 [08-core-interaction.md](08-core-interaction.md)
+> 关联：[01-scope.md](01-scope.md) · [04-architecture.md](04-architecture.md) · [05-network.md](05-network.md)（0.1.1）
 
 ## 1. 总体顺序
 
@@ -18,7 +18,7 @@ M2 历史 + keymap.toml + 中文/状态打磨
 M3 测试/验收/发布 0.1.0
         │
         ▼
-0.2 网络（独立，不在 0.1.0）
+0.1.1 网络（独立，不在 0.1.0）
 ```
 
 **原则**：先把用户明确要求的交互闭环（双 panel、`i` 输入栈、`j/k` 选中、`y/Y` 复制、状态“复制成功”）做成可运行 demo，再做历史和键位配置，最后打磨。
@@ -88,7 +88,7 @@ M3 测试/验收/发布 0.1.0
 - 24h soak（建议）。
 - 打 tag `v0.1.0`（用户确认后）。
 
-## 3. 0.2 — 网络（独立，不在 0.1.0）
+## 3. 0.1.1 — 网络（独立，不在 0.1.0）
 
 0.1.0 发布后再启动：
 

@@ -189,6 +189,23 @@ mod tests {
     }
 
     #[test]
+    fn default_member_and_network_bindings() {
+        let keymap = Keymap::defaults();
+        assert_eq!(
+            keymap.lookup(&[Key::Space, Key::Char('u')]),
+            Lookup::Action(ActionId::ToggleMembers)
+        );
+        assert_eq!(
+            keymap.lookup(&[Key::Space, Key::Char('r')]),
+            Lookup::Action(ActionId::Reconnect)
+        );
+        assert_eq!(
+            keymap.lookup(&[Key::Space, Key::Char('d')]),
+            Lookup::Action(ActionId::Disconnect)
+        );
+    }
+
+    #[test]
     fn overrides_and_unbinds() {
         let keymap = keymap("[list]\n\"j\" = \"cursor_up\"\n\"k\" = \"none\"\n");
         assert_eq!(

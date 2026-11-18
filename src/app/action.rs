@@ -6,6 +6,9 @@ use crate::app::message::Message;
 pub enum Effect {
     Persist(Message),
     Copy { text: String },
+    SendChat { msg_id: String, body: String },
+    Reconnect,
+    Disconnect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

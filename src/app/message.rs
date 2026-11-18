@@ -6,19 +6,39 @@ pub const MAX_BODY_BYTES: usize = 16 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message {
     pub id: String,
+    /// Peer node id; empty for older/local records without a source.
+    #[serde(default)]
+    pub from: String,
     pub name: String,
-    /// RFC3339 timestamp, persisted as-is.
+    /// RFC3339 timestamp used for display (local receive time for remote messages).
     pub timestamp: String,
+    /// Sender's timestamp, when known (remote messages).
+    #[serde(default)]
+    pub sent_at: String,
     pub body: String,
 }
 
 impl Message {
     pub fn new(name: impl Into<String>, body: impl Into<String>) -> Self {
+        let timestamp = Local::now().to_rfc3339();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
+            from: String::new(),
             name: name.into(),
-            timestamp: Local::now().to_rfc3339(),
+            timestamp: timestamp.clone(),
+            sent_at: timestamp,
             body: normalize_body(&body.into()),
+        }
+    }
+
+    pub fn remote(chat: &crate::net::protocol::Chat) -> Self {
+        Self {
+            id: chat.msg_id.clone(),
+            from: chat.from.clone(),
+            name: chat.name.clone(),
+            timestamp: Local::now().to_rfc3339(),
+            sent_at: chat.sent_at.clone(),
+            body: normalize_body(&chat.body),
         }
     }
 
@@ -67,8 +87,10 @@ mod tests {
     fn formats_line_as_required() {
         let message = Message {
             id: "id".into(),
+            from: String::new(),
             name: "alice@arch".into(),
             timestamp: "2026-11-19T10:30:05+08:00".into(),
+            sent_at: String::new(),
             body: "你好".into(),
         };
         let line = message.format_line();

@@ -1,7 +1,7 @@
 # 技术架构（0.1.0 单机版）
 
 > 状态：草案；核心交互以 [08-core-interaction.md](08-core-interaction.md) 为准
-> 关联：[02-keybindings.md](02-keybindings.md) · [06-quality.md](06-quality.md) · [05-network.md](05-network.md)（0.2）
+> 关联：[02-keybindings.md](02-keybindings.md) · [06-quality.md](06-quality.md) · [05-network.md](05-network.md)（0.1.1）
 
 ## 1. 设计目标
 
@@ -12,7 +12,7 @@
 5. **不阻塞**：TUI 用 `EventStream`；历史写入后台线程；剪贴板/配置读取用 `spawn_blocking`。
 6. **错误可见**：IO/配置/历史/剪贴板错误转为状态提示；不静默丢消息。
 7. **终端安全**：正常退出、panic、Q 都恢复终端。
-8. **0.2 可接网络**：消息模型/UI 预留 room/from；0.1.0 不引入网络依赖。
+8. **0.1.1 可接网络**：消息模型/UI 预留 room/from；0.1.0 不引入网络依赖。
 
 ## 2. 模块划分（0.1.0）
 
@@ -50,7 +50,7 @@ src/
     └── theme.rs            # 颜色/符号
 ```
 
-> 0.2 才加入 `net/`；0.1.0 不创建空网络模块。
+> 0.1.1 才加入 `net/`；0.1.0 不创建空网络模块。
 
 ## 3. 事件循环
 
@@ -116,7 +116,7 @@ enum InternalEvent {
 - 终端事件：Key、Paste、Resize；Mouse 关闭。
 - Tick：提示过期、待决键超时（若做多键序列）。
 - Internal：后台结果。
-- 0.1.0 没有 `NetEvent`；0.2 再加 `InternalEvent::Net`。
+- 0.1.0 没有 `NetEvent`；0.1.1 再加 `InternalEvent::Net`。
 
 ## 4. App 状态与 Layer 栈
 
@@ -407,7 +407,7 @@ max_file_mb = 10
 | crate | 用途 | 备注 |
 | --- | --- | --- |
 | `tokio` | async runtime、channel、time、spawn_blocking | features：`rt-multi-thread`、`macros`、`sync`、`time` |
-| `ratatui` | TUI 渲染 | 0.29 |
+| `ratatui` | TUI 渲染 | 0.1.19 |
 | `crossterm` | 终端/事件 | `event-stream` feature |
 | `futures-util` | `EventStream` 的 `StreamExt` | |
 | `serde` / `serde_json` | 历史/身份 | |
@@ -442,7 +442,7 @@ max_file_mb = 10
 
 - CI：`cargo fmt --check`、`cargo clippy -- -D warnings`、`cargo test`。
 - 不对真实剪贴板做强依赖测试；用 trait/mock。
-- 0.2 再加网络集成测试。
+- 0.1.1 再加网络集成测试。
 
 ## 13. 旧版清理与迁移
 
@@ -453,12 +453,12 @@ max_file_mb = 10
 - 旧共享目录不再扫描；不删除文件，文档说明 0.1.0 不处理。
 - 旧配置/环境变量冲突在 README 说明。
 
-## 14. 0.2 网络接入点（不在 0.1.0）
+## 14. 0.1.1 网络接入点（不在 0.1.0）
 
 - `InternalEvent::Net(NetEvent)` 新增变体；
 - `Effect::Net(NetCommand)`；
 - `net::start()` 返回 `NetHandle` + `NetEvent` receiver；
-- `Message` 已有 `room`/`name`；0.2 加 `from`/peer；
+- `Message` 已有 `room`/`name`；0.1.1 加 `from`/peer；
 - 状态 panel 显示 peer 数/连接状态；成员面板作为新 Layer；
 - 历史格式不因网络改变；
 - 详细协议见 [05-network.md](05-network.md)。
@@ -474,7 +474,7 @@ max_file_mb = 10
 | 历史隐私/磁盘增长 | 不写正文日志；`0600`；轮转；可关闭 |
 | 大消息/长历史卡顿 | 16 KiB 上限；只渲染可见行；缓存折行 |
 | 终端恢复失败 | TerminalGuard + panic hook + 测试 |
-| 范围膨胀（搜索/命令/网络） | 核心验收只按 08 文档；其他 P2/0.2 |
+| 范围膨胀（搜索/命令/网络） | 核心验收只按 08 文档；其他 P2/0.1.1 |
 
 ## 16. 待确认
 

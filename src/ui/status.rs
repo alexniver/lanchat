@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, StatusKind};
+use crate::net::ConnectionState;
 use crate::ui::text::truncate_display;
 use crate::ui::theme;
 
@@ -41,12 +42,19 @@ pub fn status_text(app: &App) -> String {
             format!("消息 {message_count}"),
         ]
     } else {
-        vec![
-            "在线 1（本机）".to_string(),
+        let mut parts = vec![
+            format!("在线 {}", app.online_count()),
             format!("消息 {message_count}"),
             format!("选中 {position}"),
             mode.to_string(),
-        ]
+        ];
+        if app.network_enabled() {
+            parts.push(connection_text(app.connection, true).to_string());
+        }
+        if app.unread > 0 && !app.list().map(|list| list.follow_latest).unwrap_or(true) {
+            parts.push(format!("新消息 {}", app.unread));
+        }
+        parts
     };
 
     if let Some(status) = &app.status {
@@ -55,6 +63,19 @@ pub fn status_text(app: &App) -> String {
         }
     }
     parts.join(" · ")
+}
+
+pub fn connection_text(state: ConnectionState, enabled: bool) -> &'static str {
+    if !enabled {
+        return "";
+    }
+    match state {
+        ConnectionState::Online => "● online",
+        ConnectionState::Connecting => "◌ connecting",
+        ConnectionState::Reconnecting => "◌ reconnecting",
+        ConnectionState::Offline => "! offline",
+        ConnectionState::Local => "local",
+    }
 }
 
 fn status_color(app: &App) -> ratatui::style::Color {
@@ -101,6 +122,10 @@ mod tests {
             ui: UiConfig {
                 show_help_hint: false,
             },
+            network: crate::config::NetworkConfig {
+                enabled: false,
+                ..Default::default()
+            },
             warnings: Vec::new(),
         };
         App::new(
@@ -116,7 +141,7 @@ mod tests {
     fn list_status_contains_mode_and_position() {
         let app = app_with(vec![Message::new("alice", "one")]);
         let text = status_text(&app);
-        assert!(text.contains("在线 1（本机）"));
+        assert!(text.contains("在线 1"));
         assert!(text.contains("选中 1/1"));
         assert!(text.contains("自动"));
     }

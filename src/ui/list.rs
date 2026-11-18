@@ -17,7 +17,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let selected_index = app.list().and_then(|list| list.selected);
-    let highlight = if app.top_is_compose() {
+    let highlight = if app.top_is_compose() || app.top_is_members() {
         None
     } else {
         selected_index

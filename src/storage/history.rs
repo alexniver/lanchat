@@ -196,8 +196,10 @@ fn append_sync(dir: &Path, max_bytes: u64, message: &Message) -> Result<()> {
         v: 1,
         id: message.id.clone(),
         room: "lobby".to_string(),
+        from: message.from.clone(),
         name: message.name.clone(),
         timestamp: message.timestamp.clone(),
+        sent_at: message.sent_at.clone(),
         body: message.body.clone(),
     };
     let line = serde_json::to_string(&record)?;
@@ -250,9 +252,13 @@ struct HistoryRecord {
     #[serde(default = "default_room")]
     room: String,
     #[serde(default)]
+    from: String,
+    #[serde(default)]
     name: String,
     #[serde(default)]
     timestamp: String,
+    #[serde(default)]
+    sent_at: String,
     #[serde(default)]
     body: String,
 }
@@ -264,8 +270,10 @@ impl HistoryRecord {
         }
         Some(Message {
             id: self.id,
+            from: self.from,
             name: self.name,
             timestamp: self.timestamp,
+            sent_at: self.sent_at,
             body: self.body,
         })
     }
@@ -362,6 +370,19 @@ mod tests {
         let (loaded, _) = load_recent(&paths.history_dir, 100).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].body, "thread");
+    }
+
+    #[test]
+    fn persists_remote_source_and_sent_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut remote = message("remote");
+        remote.from = "peer-1".into();
+        remote.sent_at = "2026-11-19T10:30:00+08:00".into();
+        append_sync(dir.path(), 10 * 1024 * 1024, &remote).unwrap();
+        let (loaded, _) = load_recent(dir.path(), 100).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].from, "peer-1");
+        assert_eq!(loaded[0].sent_at, "2026-11-19T10:30:00+08:00");
     }
 
     #[cfg(unix)]
