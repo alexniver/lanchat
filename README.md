@@ -1,8 +1,8 @@
-# LanChat 0.1.4
+# LanChat 0.1.6
 
 LanChat 是一个 **Helix 风格键位、键盘优先的局域网终端聊天工具**。它运行在终端里，不需要中心服务器，同一局域网内的节点通过 mDNS 自动发现，再用 TCP 直连聊天。
 
-0.1.4 增加 Windows/macOS 路径与接收文件名校验；0.1.3 已加入内置帮助，0.1.2 已加入文件传递。目标是“聊天、发文件、查看帮助都在终端里完成”：
+0.1.6 增加短号 `no1`/`no2`，文件传递可用 `no1` 或 `ip101` 寻址；0.1.4 已适配 Windows/macOS 路径，0.1.3 已加入帮助，0.1.2 已加入文件传递：
 
 - 两个 panel：消息列表 + 状态栏。
 - `i` 输入、Enter 发送、Esc 取消。
@@ -15,9 +15,10 @@ LanChat 是一个 **Helix 风格键位、键盘优先的局域网终端聊天工
 - 重名自动保存为 `a[0].png`、`a[1].png`；10 分钟未接收自动取消。
 - 在消息列表按 `?` 打开内置帮助，`j/k` 滚动，`Esc` 返回。
 - 配置/历史/接收文件使用平台目录；Windows/macOS 路径已适配。
+- 用户名显示 `昵称 (no1)`；`/send file ... to no1`、`/send file ... to ip101` 可用。
 - 本地 JSONL 历史；重启后还能看到之前消息。
 
-> **安全提醒**：0.1.4 是明文局域网聊天/文件传递，没有加密、没有身份认证。请只在可信局域网使用，不要传输敏感信息。
+> **安全提醒**：0.1.6 是明文局域网聊天/文件传递，没有加密、没有身份认证。请只在可信局域网使用，不要传输敏感信息。
 
 ## 界面
 
@@ -160,24 +161,26 @@ lanchat --no-network
 发送方：
 
 ```text
-/send file ~/Download/a.png to 103
+/send file ~/Download/a.png to no1
 ```
 
 - `/` 打开输入框并预填 `/`。
-- `<对方>` 支持完整 IP、IP 最后一段（如 `103`）、在线昵称。
+- `<对方>` 支持短号 `no1`、IP 末位 `ip101`、完整 `node_id`、node_id 唯一前缀、完整 IP、在线昵称。
+- 短号可在成员栏名字后缀看到；完整 `node_id` 在 `identity.json`。
 - 接收方会看到：
 
 ```text
-[系统][10:30:05]: 192.168.1.101 想发送文件 a.png（1.2 MB）。输入 /recv file 101 接收。
+[系统][10:30:05]: alice (no1) 想发送文件 a.png（1.2 MB）。输入 /recv file no1 接收。
 ```
 
 接收方输入：
 
 ```text
-/recv file 101
+/recv file no1
 ```
 
 - 接收该发送方全部待接收文件。
+- 文件提示中的 `/recv file` 使用短号 `no1`。
 - 文件保存到平台数据目录下的 `lanchat/files`（Linux 为 `~/.local/share/lanchat/files`）；重名自动改为 `a[0].png`、`a[1].png`。
 - 请求 10 分钟未接收自动取消；同一文件重复请求会被拦截。
 - 文件传输走独立数据 TCP 连接，控制消息走聊天连接，避免大文件阻塞聊天。
@@ -201,7 +204,7 @@ lanchat --no-network
 帮助状态栏示例：
 
 ```text
-按 Esc 退出帮助 · j/k 滚动 · 帮助 1/24 · LanChat 0.1.4
+按 Esc 退出帮助 · j/k 滚动 · 帮助 1/24 · LanChat 0.1.6
 ```
 
 ### 选中消息
@@ -287,11 +290,14 @@ Linux 遵循 XDG；macOS/Windows 使用 `dirs` 库的系统目录。`--config` �
 ```json
 {
   "node_id": "…",
-  "name": "alice@host"
+  "name": "alice@host",
+  "short_no": 1
 }
 ```
 
-`node_id` 用于网络去重/识别，建议不要删除；昵称可以通过配置修改。
+- `node_id` 用于网络去重/识别，建议不要删除。
+- `short_no` 是显示短号，`1` 显示为 `no1`；首次运行分配 1，冲突时自动顺延。
+- 昵称可以通过配置修改。
 
 ### `config.toml`
 
@@ -408,7 +414,7 @@ lanchat --connect 192.168.1.10:47731
 
 ### 安全边界
 
-0.1.4 **不提供**：
+0.1.6 **不提供**：
 
 - 加密、身份认证、前向保密；
 - 文件夹同步/自动共享；
@@ -484,7 +490,7 @@ cargo test
 cargo build --release
 ```
 
-旧版实现保留在 [`old/`](old/)，不参与编译。0.1.0 的历史需求在 [docs/requ/0.1.0/README.md](docs/requ/0.1.0/README.md)，0.1.1 联网设计与决策在 [docs/0.1.1/README.md](docs/0.1.1/README.md)，0.1.2 文件传递需求在 [docs/0.1.2/README.md](docs/0.1.2/README.md)，0.1.3 帮助页面需求在 [docs/0.1.3/README.md](docs/0.1.3/README.md)，0.1.4 跨平台路径适配在 [docs/0.1.4/README.md](docs/0.1.4/README.md)。
+旧版实现保留在 [`old/`](old/)，不参与编译。0.1.0 的历史需求在 [docs/requ/0.1.0/README.md](docs/requ/0.1.0/README.md)，0.1.1 联网设计与决策在 [docs/0.1.1/README.md](docs/0.1.1/README.md)，0.1.2 文件传递需求在 [docs/0.1.2/README.md](docs/0.1.2/README.md)，0.1.3 帮助页面需求在 [docs/0.1.3/README.md](docs/0.1.3/README.md)，0.1.4 跨平台路径适配在 [docs/0.1.4/README.md](docs/0.1.4/README.md)，0.1.5 node_id 用户名在 [docs/0.1.5/README.md](docs/0.1.5/README.md)，0.1.6 短号在 [docs/0.1.6/README.md](docs/0.1.6/README.md)。
 
 ## 许可证
 

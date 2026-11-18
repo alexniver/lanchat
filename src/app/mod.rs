@@ -5,6 +5,7 @@ pub mod help;
 pub mod input;
 pub mod list;
 pub mod message;
+pub mod naming;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -56,6 +57,8 @@ impl HelpState {
 #[derive(Debug, Clone)]
 pub struct PeerView {
     pub name: String,
+    pub display_name: String,
+    pub short_no: u32,
     pub addr: SocketAddr,
 }
 
@@ -463,25 +466,29 @@ impl App {
             NetEvent::PeerUp {
                 node_id,
                 name,
+                short_no,
                 addr,
             } => {
+                let display_name = naming::display_name(&name, &node_id, short_no);
                 self.peers.insert(
                     node_id.clone(),
                     PeerView {
                         name: name.clone(),
+                        display_name: display_name.clone(),
+                        short_no,
                         addr,
                     },
                 );
                 self.connection = ConnectionState::Online;
-                self.set_status(format!("{name} 加入"), StatusKind::Info);
+                self.set_status(format!("{display_name} 加入"), StatusKind::Info);
                 self.dirty = true;
             }
             NetEvent::PeerDown { node_id, reason } => {
                 let name = self
                     .peers
                     .remove(&node_id)
-                    .map(|peer| peer.name)
-                    .unwrap_or_else(|| node_id.clone());
+                    .map(|peer| peer.display_name)
+                    .unwrap_or_else(|| naming::display_name("用户", &node_id, 0));
                 let had_pending = self
                     .pending_file_offers
                     .iter()
@@ -504,7 +511,12 @@ impl App {
                 self.dirty = true;
             }
             NetEvent::ChatReceived(chat) => {
-                let message = Message::remote(&chat);
+                let mut message = Message::remote(&chat);
+                message.name = self
+                    .peers
+                    .get(&chat.from)
+                    .map(|peer| peer.display_name.clone())
+                    .unwrap_or_else(|| naming::display_name(&chat.name, &chat.from, 0));
                 self.messages.push(message.clone());
                 self.effects.push(Effect::Persist(message));
                 let message_count = self.messages.len();
@@ -540,10 +552,19 @@ impl App {
                     transfer_id,
                     file_name: file_name.clone(),
                 });
-                let last = addr.ip().to_string();
-                let last = last.rsplit('.').next().unwrap_or(&last).to_string();
+                let _ = addr;
+                let display = self
+                    .peers
+                    .get(&node_id)
+                    .map(|peer| peer.display_name.clone())
+                    .unwrap_or_else(|| naming::display_name(&peer_name, &node_id, 0));
+                let short = self
+                    .peers
+                    .get(&node_id)
+                    .and_then(|peer| (peer.short_no > 0).then(|| format!("no{}", peer.short_no)))
+                    .unwrap_or_else(|| naming::short_node_id(&node_id));
                 self.push_system(format!(
-                    "{peer_name} 想发送文件 {file_name}（{}）。输入 /recv file {last} 接收。",
+                    "{display} 想发送文件 {file_name}（{}）。输入 /recv file {short} 接收。",
                     format_size(size)
                 ));
             }
@@ -656,6 +677,17 @@ impl App {
             }
             NetEvent::FileCommandError { message } => {
                 self.set_status(message, StatusKind::Error);
+            }
+            NetEvent::LocalShortNoChanged { short_no } => {
+                self.config.identity.short_no = short_no;
+                self.dirty = true;
+            }
+            NetEvent::PeerShortNoChanged { node_id, short_no } => {
+                if let Some(peer) = self.peers.get_mut(&node_id) {
+                    peer.short_no = short_no;
+                    peer.display_name = naming::display_name(&peer.name, &node_id, short_no);
+                }
+                self.dirty = true;
             }
             NetEvent::Status { state, detail } => {
                 self.connection = state;
@@ -776,7 +808,7 @@ impl App {
         }
         let saved_selected = compose.saved_selected;
         let saved_follow_latest = compose.saved_follow_latest;
-        let name = self.config.identity.name.clone();
+        let name = self.self_display_name();
         let mut message = Message::new(name, text);
         message.from = self.config.identity.node_id.clone();
         let msg_id = message.id.clone();
@@ -916,22 +948,43 @@ impl App {
         self.dirty = true;
     }
 
+    pub fn self_display_name(&self) -> String {
+        naming::display_name(
+            &self.config.identity.name,
+            &self.config.identity.node_id,
+            self.config.identity.short_no,
+        )
+    }
+
     fn resolve_peer(&self, text: &str) -> Result<(String, String, SocketAddr), String> {
         let text = text.trim();
         let mut matches = Vec::new();
         for (node_id, peer) in &self.peers {
             let ip = peer.addr.ip().to_string();
-            let last = ip.rsplit('.').next().unwrap_or("");
-            if ip == text || last == text || peer.name.eq_ignore_ascii_case(text) {
-                matches.push((node_id.clone(), peer.name.clone(), peer.addr));
+            let matches_id = node_id == text || node_id.starts_with(text);
+            let matches_no = text
+                .strip_prefix("no")
+                .and_then(|value| value.parse::<u32>().ok())
+                .is_some_and(|number| number != 0 && peer.short_no == number);
+            let matches_ip = text
+                .strip_prefix("ip")
+                .and_then(|value| value.parse::<u8>().ok())
+                .is_some_and(|last| ip.rsplit('.').next() == Some(last.to_string().as_str()));
+            if matches_id
+                || matches_no
+                || matches_ip
+                || ip == text
+                || peer.name.eq_ignore_ascii_case(text)
+            {
+                matches.push((node_id.clone(), peer.display_name.clone(), peer.addr));
             }
         }
         match matches.len() {
             1 => Ok(matches.remove(0)),
             0 => Err(format!(
-                "找不到在线用户 {text}。请确认对方在线，或使用完整 IP。"
+                "找不到在线用户 {text}。请用 node_id、完整 IP 或昵称重试。"
             )),
-            _ => Err(format!("{text} 匹配到多个在线用户，请改用完整 IP。")),
+            _ => Err(format!("{text} 匹配到多个在线用户，请改用完整 node_id。")),
         }
     }
 
@@ -1041,8 +1094,8 @@ impl App {
     fn peer_display(&self, node_id: &str) -> String {
         self.peers
             .get(node_id)
-            .map(|peer| peer.name.clone())
-            .unwrap_or_else(|| node_id.to_string())
+            .map(|peer| peer.display_name.clone())
+            .unwrap_or_else(|| naming::display_name("用户", node_id, 0))
     }
 
     fn set_status(&mut self, text: impl Into<String>, kind: StatusKind) {
@@ -1073,6 +1126,7 @@ pub(crate) fn test_app(messages: Vec<Message>) -> App {
         identity: Identity {
             node_id: "node".to_string(),
             name: "alice@arch".to_string(),
+            short_no: 1,
         },
         history: HistoryConfig {
             enabled: false,
@@ -1136,6 +1190,7 @@ mod tests {
             identity: Identity {
                 node_id: "node".to_string(),
                 name: "alice@arch".to_string(),
+                short_no: 1,
             },
             history: HistoryConfig {
                 enabled: false,
@@ -1292,6 +1347,7 @@ mod tests {
         app.handle_net_event(NetEvent::PeerUp {
             node_id: "peer-1".into(),
             name: "bob@arch".into(),
+            short_no: 1,
             addr: "127.0.0.1:47732".parse().unwrap(),
         });
         assert_eq!(app.online_count(), 2);
@@ -1333,6 +1389,7 @@ mod tests {
         app.handle_net_event(NetEvent::PeerUp {
             node_id: "peer-1".into(),
             name: "bob@arch".into(),
+            short_no: 1,
             addr: "127.0.0.1:47732".parse().unwrap(),
         });
         app.handle_key(Key::Space);
@@ -1445,7 +1502,7 @@ mod tests {
         assert_eq!(app.pending_file_offers.len(), 1);
         assert_eq!(app.messages.len(), 1);
         assert_eq!(app.messages[0].kind, MessageKind::System);
-        assert!(app.messages[0].body.contains("/recv file 101"));
+        assert!(app.messages[0].body.contains("/recv file peer-1"));
         assert!(app.messages[0].body.contains("a.png"));
     }
 
@@ -1456,6 +1513,7 @@ mod tests {
         app.handle_net_event(NetEvent::PeerUp {
             node_id: "peer-1".into(),
             name: "bob".into(),
+            short_no: 1,
             addr: "192.168.1.101:47731".parse().unwrap(),
         });
         app.handle_net_event(NetEvent::FileOfferReceived {
@@ -1475,7 +1533,7 @@ mod tests {
             size: 1300,
         });
         app.handle_key(Key::Char('/'));
-        type_text(&mut app, "recv file 101");
+        type_text(&mut app, "recv file no1");
         app.handle_key(Key::Enter);
         let effects = app.take_effects();
         assert!(effects.iter().any(|effect| matches!(
@@ -1495,6 +1553,7 @@ mod tests {
         app.handle_net_event(NetEvent::PeerUp {
             node_id: "peer-1".into(),
             name: "bob".into(),
+            short_no: 1,
             addr: "127.0.0.1:47731".parse().unwrap(),
         });
         app.handle_key(Key::Char('/'));
@@ -1587,5 +1646,75 @@ mod tests {
         assert!(status.contains("按 Esc 退出帮助"));
         assert!(status.contains("LanChat"));
         assert!(!status.contains("在线"));
+    }
+    #[test]
+    fn display_names_use_node_id_prefix() {
+        let mut app = app_with(vec![]);
+        assert_eq!(app.self_display_name(), "alice@arch (no1)");
+        let id = "19b9b31e-c81d-4c6a-8af3-27c16587b238";
+        app.handle_net_event(NetEvent::PeerUp {
+            node_id: id.into(),
+            name: "bob@arch".into(),
+            short_no: 1,
+            addr: "192.168.1.103:47731".parse().unwrap(),
+        });
+        assert_eq!(app.peers.get(id).unwrap().display_name, "bob@arch (no1)");
+        let chat = crate::net::protocol::Chat {
+            msg_id: "remote-node".into(),
+            room: "lobby".into(),
+            from: id.into(),
+            name: "bob@arch".into(),
+            seq: 1,
+            sent_at: "2026-11-19T10:30:00+08:00".into(),
+            body: "hi".into(),
+        };
+        app.handle_net_event(NetEvent::ChatReceived(chat));
+        assert_eq!(app.messages[0].name, "bob@arch (no1)");
+    }
+
+    #[test]
+    fn resolve_peer_uses_node_id_prefix_not_ip_last_octet() {
+        let mut app = app_with(vec![]);
+        app.config.network.enabled = true;
+        let id = "19b9b31e-c81d-4c6a-8af3-27c16587b238";
+        app.handle_net_event(NetEvent::PeerUp {
+            node_id: id.into(),
+            name: "bob@arch".into(),
+            short_no: 1,
+            addr: "192.168.1.103:47731".parse().unwrap(),
+        });
+        assert_eq!(app.resolve_peer("19b9b31e").unwrap().0, id);
+        assert_eq!(app.resolve_peer("no1").unwrap().0, id);
+        assert_eq!(app.resolve_peer("ip103").unwrap().0, id);
+        assert_eq!(app.resolve_peer(id).unwrap().0, id);
+        assert_eq!(app.resolve_peer("192.168.1.103").unwrap().0, id);
+        assert_eq!(app.resolve_peer("bob@arch").unwrap().0, id);
+        assert!(app.resolve_peer("103").is_err());
+        assert!(app.resolve_peer("no2").is_err());
+        assert!(app.resolve_peer("deadbeef").is_err());
+    }
+
+    #[test]
+    fn send_file_accepts_node_id_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, b"abc").unwrap();
+        let mut app = app_with(vec![]);
+        app.config.network.enabled = true;
+        let id = "19b9b31e-c81d-4c6a-8af3-27c16587b238";
+        app.handle_net_event(NetEvent::PeerUp {
+            node_id: id.into(),
+            name: "bob@arch".into(),
+            short_no: 1,
+            addr: "192.168.1.103:47731".parse().unwrap(),
+        });
+        app.handle_key(Key::Char('/'));
+        type_text(&mut app, &format!("send file {} to no1", path.display()));
+        app.handle_key(Key::Enter);
+        let effects = app.take_effects();
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::SendFile { node_id, .. } if node_id == id
+        )));
     }
 }

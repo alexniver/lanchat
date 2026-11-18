@@ -89,6 +89,7 @@ mod tests {
         app.handle_net_event(crate::net::NetEvent::PeerUp {
             node_id: "peer-1".into(),
             name: "bob@arch".into(),
+            short_no: 1,
             addr: "127.0.0.1:47732".parse().unwrap(),
         });
         app.handle_key(Key::Space);
@@ -98,7 +99,7 @@ mod tests {
         terminal.draw(|frame| render(frame, &app)).unwrap();
         let text = buffer_text(terminal.backend().buffer()).replace(' ', "");
         assert!(text.contains("成员"));
-        assert!(text.contains("bob@arch"));
+        assert!(text.contains("bob@arch(no1)"));
         assert!(text.contains("(you)"));
         assert!(text.contains("在线2"));
     }
@@ -114,7 +115,7 @@ mod tests {
         assert!(text.contains("帮助"));
         assert!(text.contains("快速开始"));
         assert!(text.contains("按Esc退出帮助"));
-        assert!(text.contains("LanChat0.1.4"));
+        assert!(text.contains("LanChat0.1.6"));
         assert!(!text.contains("信息列表"));
         assert!(!text.contains("在线1"));
     }

@@ -133,6 +133,7 @@ mod tests {
             identity: Identity {
                 node_id: "node".into(),
                 name: "alice".into(),
+                short_no: 1,
             },
             history: HistoryConfig {
                 enabled: false,

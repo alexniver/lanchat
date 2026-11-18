@@ -23,6 +23,8 @@ pub struct Config {
 pub struct Identity {
     pub node_id: String,
     pub name: String,
+    /// Short user-facing number (no1, no2, ...). 0 means unassigned.
+    pub short_no: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -270,6 +272,8 @@ struct IdentityFile {
     node_id: String,
     #[serde(default, alias = "display_name")]
     name: String,
+    #[serde(default)]
+    short_no: u32,
 }
 
 fn load_or_create_identity(
@@ -307,21 +311,37 @@ fn load_or_create_identity(
         identity_file.name = default_name();
         changed = true;
     }
+    if identity_file.short_no == 0 {
+        identity_file.short_no = 1;
+        changed = true;
+    }
 
     if changed || !path.exists() {
-        save_identity(path, &identity_file)?;
+        save_identity_file(path, &identity_file)?;
     }
 
     Ok((
         Identity {
             node_id: identity_file.node_id,
             name: identity_file.name,
+            short_no: identity_file.short_no,
         },
         warnings,
     ))
 }
 
-fn save_identity(path: &Path, identity: &IdentityFile) -> Result<()> {
+pub fn save_identity(path: &Path, identity: &Identity) -> Result<()> {
+    save_identity_file(
+        path,
+        &IdentityFile {
+            node_id: identity.node_id.clone(),
+            name: identity.name.clone(),
+            short_no: identity.short_no,
+        },
+    )
+}
+
+fn save_identity_file(path: &Path, identity: &IdentityFile) -> Result<()> {
     if let Some(parent) = path.parent() {
         ensure_dir(parent)?;
     }

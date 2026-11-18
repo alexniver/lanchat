@@ -15,13 +15,13 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     };
     let mut items = Vec::new();
     items.push(member_item(
-        &app.config.identity.name,
+        &app.self_display_name(),
         "(you) · 本机",
         selected == 0,
     ));
     for (index, peer) in app.peers.values().enumerate() {
         items.push(member_item(
-            &peer.name,
+            &peer.display_name,
             &peer.addr.to_string(),
             selected == index + 1,
         ));

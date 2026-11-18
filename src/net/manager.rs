@@ -64,6 +64,7 @@ pub enum NetEvent {
     PeerUp {
         node_id: String,
         name: String,
+        short_no: u32,
         addr: SocketAddr,
     },
     PeerDown {
@@ -124,6 +125,13 @@ pub enum NetEvent {
     FileCommandError {
         message: String,
     },
+    LocalShortNoChanged {
+        short_no: u32,
+    },
+    PeerShortNoChanged {
+        node_id: String,
+        short_no: u32,
+    },
     Status {
         state: ConnectionState,
         detail: String,
@@ -151,6 +159,7 @@ enum PeerEvent {
     Connected {
         node_id: String,
         name: String,
+        short_no: u32,
         addr: SocketAddr,
         listen_port: u16,
         capabilities: Vec<String>,
@@ -200,6 +209,8 @@ struct PeerEntry {
     tx: mpsc::Sender<WireMessage>,
     close: watch::Sender<bool>,
     supports_files: bool,
+    supports_short_no: bool,
+    short_no: u32,
     last_seen: Instant,
     last_ping: Instant,
 }
@@ -229,6 +240,7 @@ struct ReconnectState {
 struct Manager {
     listener: TcpListener,
     local: Identity,
+    identity_path: PathBuf,
     listen_port: u16,
     config: NetworkConfig,
     events: mpsc::Sender<NetEvent>,
@@ -257,6 +269,7 @@ struct Manager {
 pub async fn start(
     config: NetworkConfig,
     identity: Identity,
+    identity_path: PathBuf,
     files_dir: PathBuf,
 ) -> Result<(NetHandle, mpsc::Receiver<NetEvent>)> {
     let (event_tx, event_rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -307,6 +320,7 @@ pub async fn start(
     let mut manager = Manager {
         listener,
         local: identity,
+        identity_path,
         listen_port: local_port,
         config: config.clone(),
         events: event_tx.clone(),
@@ -628,6 +642,7 @@ impl Manager {
             PeerEvent::Connected {
                 node_id,
                 name,
+                short_no,
                 addr,
                 listen_port,
                 capabilities,
@@ -645,6 +660,28 @@ impl Manager {
                         listen_port
                     },
                 );
+                let supports_short_no = capabilities.iter().any(|item| item == "short_no");
+                let peer_short_no = short_no;
+                let mut local_short_changed = false;
+                if supports_short_no
+                    && short_no != 0
+                    && short_no == self.local.short_no
+                    && self.local.node_id > node_id
+                {
+                    let mut candidate = 1u32;
+                    while candidate == short_no
+                        || self.peers.values().any(|peer| peer.short_no == candidate)
+                    {
+                        candidate = candidate.saturating_add(1);
+                    }
+                    self.local.short_no = candidate;
+                    if let Err(error) =
+                        crate::config::save_identity(&self.identity_path, &self.local)
+                    {
+                        tracing::warn!(%error, "保存 short_no 失败");
+                    }
+                    local_short_changed = true;
+                }
                 if self.peers.contains_key(&node_id) {
                     let mut stream = stream;
                     let _ = write_frame(
@@ -696,6 +733,8 @@ impl Manager {
                         tx: peer_tx,
                         close: close_tx,
                         supports_files: capabilities.iter().any(|item| item == "file_transfer"),
+                        supports_short_no,
+                        short_no: peer_short_no,
                         last_seen: Instant::now(),
                         last_ping: Instant::now(),
                     },
@@ -708,9 +747,27 @@ impl Manager {
                     .send(NetEvent::PeerUp {
                         node_id,
                         name,
+                        short_no: peer_short_no,
                         addr: listen_addr,
                     })
                     .await;
+                if local_short_changed {
+                    let _ = self
+                        .events
+                        .send(NetEvent::LocalShortNoChanged {
+                            short_no: self.local.short_no,
+                        })
+                        .await;
+                    let update = WireMessage::ShortNoUpdate(crate::net::protocol::ShortNoUpdate {
+                        node_id: self.local.node_id.clone(),
+                        short_no: self.local.short_no,
+                    });
+                    for peer in self.peers.values() {
+                        if peer.supports_short_no {
+                            let _ = peer.tx.try_send(update.clone());
+                        }
+                    }
+                }
                 self.emit_status(ConnectionState::Online, "已连接".to_string());
             }
             PeerEvent::Message { node_id, message } => {
@@ -1054,6 +1111,20 @@ impl Manager {
                     })
                     .await;
             }
+            WireMessage::ShortNoUpdate(update) => {
+                if update.node_id == node_id && update.short_no != 0 {
+                    if let Some(peer) = self.peers.get_mut(&node_id) {
+                        peer.short_no = update.short_no;
+                        let _ = self
+                            .events
+                            .send(NetEvent::PeerShortNoChanged {
+                                node_id: node_id.clone(),
+                                short_no: update.short_no,
+                            })
+                            .await;
+                    }
+                }
+            }
             WireMessage::FileError(error) => {
                 let name = self
                     .outgoing
@@ -1325,6 +1396,7 @@ impl Manager {
                                 .send(PeerEvent::Connected {
                                     node_id: hello.node_id,
                                     name: hello.name,
+                                    short_no: hello.short_no,
                                     addr,
                                     listen_port: hello.listen_port,
                                     capabilities: hello.capabilities.clone(),
@@ -1398,6 +1470,7 @@ impl Manager {
                                 .send(PeerEvent::Connected {
                                     node_id: hello.node_id,
                                     name: hello.name,
+                                    short_no: hello.short_no,
                                     addr,
                                     listen_port: hello.listen_port,
                                     capabilities: hello.capabilities.clone(),
@@ -1471,7 +1544,12 @@ fn local_hello(local: &Identity, listen_port: u16) -> Hello {
         name: local.name.clone(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         listen_port,
-        capabilities: vec!["chat".to_string(), "file_transfer".to_string()],
+        short_no: local.short_no,
+        capabilities: vec![
+            "chat".to_string(),
+            "file_transfer".to_string(),
+            "short_no".to_string(),
+        ],
         nonce: uuid::Uuid::new_v4().to_string(),
     }
 }
@@ -1652,21 +1730,28 @@ mod tests {
         let alice = Identity {
             node_id: "alice-node".into(),
             name: "alice".into(),
+            short_no: 1,
         };
         let bob = Identity {
             node_id: "bob-node".into(),
             name: "bob".into(),
+            short_no: 1,
         };
         let dir_a = tempfile::tempdir().unwrap();
         let dir_b = tempfile::tempdir().unwrap();
-        let (alice_handle, mut alice_rx) =
-            start(config(0, Vec::new()), alice, dir_a.path().join("files"))
-                .await
-                .unwrap();
+        let (alice_handle, mut alice_rx) = start(
+            config(0, Vec::new()),
+            alice,
+            dir_a.path().join("identity.json"),
+            dir_a.path().join("files"),
+        )
+        .await
+        .unwrap();
         let alice_port = alice_handle.local_port();
         let (bob_handle, mut bob_rx) = start(
             config(0, vec![format!("127.0.0.1:{alice_port}")]),
             bob,
+            dir_b.path().join("identity.json"),
             dir_b.path().join("files"),
         )
         .await
@@ -1751,21 +1836,28 @@ mod tests {
         let alice = Identity {
             node_id: "alice-node".into(),
             name: "alice".into(),
+            short_no: 1,
         };
         let bob = Identity {
             node_id: "bob-node".into(),
             name: "bob".into(),
+            short_no: 1,
         };
         let dir_a = tempfile::tempdir().unwrap();
         let dir_b = tempfile::tempdir().unwrap();
-        let (alice_handle, mut alice_rx) =
-            start(config(0, Vec::new()), alice, dir_a.path().join("files"))
-                .await
-                .unwrap();
+        let (alice_handle, mut alice_rx) = start(
+            config(0, Vec::new()),
+            alice,
+            dir_a.path().join("identity.json"),
+            dir_a.path().join("files"),
+        )
+        .await
+        .unwrap();
         let alice_port = alice_handle.local_port();
         let (bob_handle, mut bob_rx) = start(
             config(0, vec![format!("127.0.0.1:{alice_port}")]),
             bob,
+            dir_b.path().join("identity.json"),
             dir_b.path().join("files"),
         )
         .await
@@ -1818,21 +1910,28 @@ mod tests {
         let alice = Identity {
             node_id: "alice-node".into(),
             name: "alice".into(),
+            short_no: 1,
         };
         let bob = Identity {
             node_id: "bob-node".into(),
             name: "bob".into(),
+            short_no: 1,
         };
         let dir_a = tempfile::tempdir().unwrap();
         let dir_b = tempfile::tempdir().unwrap();
-        let (alice_handle, mut alice_rx) =
-            start(config(0, Vec::new()), alice, dir_a.path().join("files"))
-                .await
-                .unwrap();
+        let (alice_handle, mut alice_rx) = start(
+            config(0, Vec::new()),
+            alice,
+            dir_a.path().join("identity.json"),
+            dir_a.path().join("files"),
+        )
+        .await
+        .unwrap();
         let alice_port = alice_handle.local_port();
         let (bob_handle, mut bob_rx) = start(
             config(0, vec![format!("127.0.0.1:{alice_port}")]),
             bob,
+            dir_b.path().join("identity.json"),
             dir_b.path().join("files"),
         )
         .await
@@ -1903,21 +2002,28 @@ mod tests {
         let alice = Identity {
             node_id: "alice-node".into(),
             name: "alice".into(),
+            short_no: 1,
         };
         let bob = Identity {
             node_id: "bob-node".into(),
             name: "bob".into(),
+            short_no: 1,
         };
         let dir_a = tempfile::tempdir().unwrap();
         let dir_b = tempfile::tempdir().unwrap();
-        let (alice_handle, mut alice_rx) =
-            start(config(0, Vec::new()), alice, dir_a.path().to_path_buf())
-                .await
-                .unwrap();
+        let (alice_handle, mut alice_rx) = start(
+            config(0, Vec::new()),
+            alice,
+            dir_a.path().join("identity.json"),
+            dir_a.path().to_path_buf(),
+        )
+        .await
+        .unwrap();
         let alice_port = alice_handle.local_port();
         let (bob_handle, mut bob_rx) = start(
             config(0, vec![format!("127.0.0.1:{alice_port}")]),
             bob,
+            dir_b.path().join("identity.json"),
             dir_b.path().to_path_buf(),
         )
         .await

@@ -28,6 +28,7 @@ pub enum WireMessage {
     FileComplete(FileComplete),
     FileCancel(FileCancel),
     FileError(FileError),
+    ShortNoUpdate(ShortNoUpdate),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,8 +42,16 @@ pub struct Hello {
     #[serde(default)]
     pub listen_port: u16,
     #[serde(default)]
+    pub short_no: u32,
+    #[serde(default)]
     pub capabilities: Vec<String>,
     pub nonce: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShortNoUpdate {
+    pub node_id: String,
+    pub short_no: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -253,7 +262,8 @@ mod tests {
             name: "alice@arch".into(),
             version: "0.1.2".into(),
             listen_port: 47731,
-            capabilities: vec!["chat".into()],
+            short_no: 1,
+            capabilities: vec!["chat".into(), "short_no".into()],
             nonce: "nonce".into(),
         }
     }
@@ -322,6 +332,10 @@ mod tests {
                 transfer_id: "t1".into(),
                 code: "x".into(),
                 message: "y".into(),
+            }),
+            WireMessage::ShortNoUpdate(ShortNoUpdate {
+                node_id: "node-a".into(),
+                short_no: 2,
             }),
         ] {
             let encoded = encode_frame(&message).unwrap();
