@@ -1,2 +1,5 @@
 /target
 /log
+/old/target
+/old/log
+/.tmp-*

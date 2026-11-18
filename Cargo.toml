@@ -2,23 +2,33 @@
 name = "lanchat"
 version = "0.1.0"
 edition = "2021"
+description = "A Helix-inspired, keyboard-first local chat TUI"
+license = "MIT"
+publish = false
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.9"
 anyhow = "1"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 dirs = "6"
-libc = "0.2"
-mdns-sd = "0.19"
-sha2 = "0.10"
+unicode-width = "0.2"
 base64 = "0.22"
-ratatui = "0.29"
-crossterm = "0.28"
+arboard = { version = "3", default-features = false }
 whoami = "1"
 hostname = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+
+[workspace]
+exclude = ["old"]

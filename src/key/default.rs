@@ -1,0 +1,22 @@
+use super::{ActionId, Binding, Key};
+
+pub fn bindings() -> Vec<Binding> {
+    vec![
+        binding(&["i"], ActionId::OpenCompose),
+        binding(&["j"], ActionId::CursorDown),
+        binding(&["k"], ActionId::CursorUp),
+        binding(&["y"], ActionId::CopyBody),
+        binding(&["Y"], ActionId::CopyLine),
+        binding(&["Q"], ActionId::Quit),
+    ]
+}
+
+fn binding(keys: &[&str], action: ActionId) -> Binding {
+    Binding {
+        keys: keys
+            .iter()
+            .map(|key| Key::parse(key).expect("内置键位必须合法"))
+            .collect(),
+        action,
+    }
+}

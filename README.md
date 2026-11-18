@@ -1,188 +1,120 @@
-# LanChat
+# LanChat 0.1.0
 
-> 局域网即时通讯与文件共享工具 — 零配置，打开即聊。
+> Helix-inspired、键位可自定义的单机终端聊天工具。
+>
+> 0.1.0 只做本地聊天内核；局域网联网在 0.2。
 
-LanChat 是一个基于 Rust 的轻量级局域网通讯工具，使用 mDNS 自动发现同一网络内的其他节点，支持文本聊天和文件共享。所有通讯均为点对点 TCP 直连，不依赖中心服务器。
+## 功能
 
-## 功能特性
+- 上下双 panel：上方信息列表，下方状态（3 行）。
+- 消息格式：`[name][datetime]: message`。
+- `i` 打开输入 panel；Enter 发送，Esc/空 Enter 取消。
+- 选中分**自动/手动**两种模式：
+  - 默认自动选中最后一条；新消息自动选最新。
+  - `j/k` 选中非最新消息后进入手动模式；手动模式下新消息（含自己发送的）不自动跳。
+  - `j/k` 选回最新后恢复自动。
+- `y` 复制正文，`Y` 复制完整 `[name][datetime]: message`；状态显示“复制成功”。
+- 列表默认选中最后一条；输入 panel 打开时选中高亮消失，`j/k/y/Y/i` 只作为文字输入。
+- `Q`（List 层）退出；Compose 下 `Q` 是普通字符。
+- 本地 JSONL 历史：启动加载最近消息，退出 flush；文件权限 `0600`。
+- `keymap.toml` 可覆盖 List 层键位；坏配置回退默认。
+- 中文/emoji 按显示宽度处理；程序不加载字体。
 
--   **自动发现** — 通过 mDNS 协议自动发现局域网内的 LanChat 节点，无需手动配置 IP
--   **实时聊天** — 收发文本消息并自动广播给所有在线节点，支持消息历史滚动
--   **文件共享** — 将文件放入共享目录即可被其他节点浏览和下载，支持 SHA256 校验
--   **终端界面 (TUI)** — 双标签页（聊天 / 文件）终端界面，方向键操作
--   **连接去重** — 端口号比较策略，避免双向重复连接
--   **身份持久化** — 首次运行自动生成 UUID 身份和 `用户名@主机名` 显示名
-
-## 界面预览
-
-```
-┌─ 标签 ─────────────────────────┐
-│  💬 聊天        📁 文件         │
-├─────────────────────────────────┤
-│                                 │
-│  [10:30:00] zhulin@arch        │
-│  你好！                         │
-│                                 │
-│  [10:30:05] bob@ubuntu         │
-│  收到～                          │
-│                                 │
-├─ 输入 ──────────────────────────┤
-│  ▌                              │
-└─────────────────────────────────┘
-
-  按 Tab 切换到文件视图，按 Ctrl+Q 退出
-```
-
-## 快速开始
-
-### 编译运行
+## 构建与运行
 
 ```bash
-# 克隆仓库
-git clone <repo-url> && cd lanchat
-
-# 编译并运行
-cargo run --release
-
-# 指定端口号（默认为随机端口）
-cargo run --release -- --port 47731
+cargo run
+cargo test
 ```
 
-### 系统要求
+首次运行会在 XDG 配置目录生成 `identity.json`（node_id + 昵称）。
 
--   **Rust** 1.75+
--   **操作系统** Linux / macOS / Windows（理论上支持，需要 mDNS 兼容环境）
--   **网络** 同一局域网（或可互相 UDP/TCP 连通的子网）
+## 默认键位
 
-## 使用指南
+| 层 | 键 | 动作 |
+| --- | --- | --- |
+| List | `i` | 打开输入 panel |
+| List | `j` / `k` | 下/上移动选中（并切换自动/手动） |
+| List | `y` | 复制正文 |
+| List | `Y` | 复制完整行 |
+| List | `Q` | 退出 |
+| Compose | `Enter` | 非空发送；空/纯空白取消 |
+| Compose | `Esc` | 取消，丢弃输入 |
+| Compose | 其他字符 | 文本输入（`j/k/y/Y/i/Q` 都是文字） |
 
-### 聊天 (Chat 标签)
+Compose 下只响应 `Enter`/`Esc` 两个**应用快捷键**；方向键、Backspace、Delete、Ctrl+w/u/k/a/e 等仍用于文本编辑。
 
-| 操作         | 按键                  |
-| ------------ | --------------------- |
-| 输入消息     | 直接键入              |
-| 发送消息     | `Enter`              |
-| 切换标签     | `Tab`                |
-| 历史向上翻   | `↑` / `PageUp`       |
-| 历史向下翻   | `↓` / `PageDown`     |
-| 跳回最新     | `PageDown` 连按或触底 |
-| 移动光标     | `←` / `→`            |
-| 删除         | `Backspace` / `Delete` |
-| 退出程序     | `Ctrl+Q`             |
+## 配置
 
-### 文件共享 (Files 标签)
+Linux（遵循 XDG）：
 
-| 操作         | 按键                  |
-| ------------ | --------------------- |
-| 选择节点     | `←` `→` (切换焦点) `↑` `↓` |
-| 选择文件     | `→` 聚焦右栏后 `↑` `↓` |
-| 下载文件     | `Enter` 或 `s` 键    |
-| 切换焦点     | `←` / `→`            |
+| 类型 | 路径 |
+| --- | --- |
+| 配置 | `~/.config/lanchat/config.toml` |
+| 键位 | `~/.config/lanchat/keymap.toml` |
+| 身份 | `~/.config/lanchat/identity.json` |
+| 历史 | `~/.local/share/lanchat/history/` |
+| 日志 | `~/.local/state/lanchat/logs/` |
 
-**如何共享文件** — 将需要共享的文件放入以下目录：
+`config.toml` 示例：
 
-```
-~/.local/share/lanchat/
-```
+```toml
+[identity]
+name = "alice@arch"
 
-程序启动时自动扫描该目录，连接新节点时自动交换文件列表。下载的文件也会保存在此目录中。
+[ui]
+show_help_hint = true
 
-**同步状态标记**
-
-| 标记        | 含义                         |
-| ----------- | ---------------------------- |
-| `[已同步]`  | 本地已有，SHA256 一致         |
-| `[有更新]`  | 本地有同名但内容不同的文件     |
-| `[同步]`    | 远端文件，可下载               |
-
-如果下载时本地已存在同名且 SHA256 不同的文件，会自动添加 `.conflict` 后缀以避免覆盖。
-
-## 命令行参数
-
-```
-lanchat [--port <PORT>] [--identity <PATH>] [--name <NAME>]
+[history]
+enabled = true
+max_messages = 5000
+max_file_mb = 10
 ```
 
-| 参数          | 说明                                        |
-| ------------- | ------------------------------------------- |
-| `--port`      | 指定 TCP 监听端口（默认随机端口）            |
-| `--identity`  | 指定自定义身份文件路径                       |
-| `--name`      | 覆盖显示名称（预留，后续版本支持）            |
+`keymap.toml` 示例：
 
-## 项目架构
+```toml
+[list]
+"j" = "cursor_down"
+"k" = "cursor_up"
+"y" = "copy_body"
+"Y" = "copy_line"
+"i" = "open_compose"
 
-```
-src/
-├── main.rs          # 入口、事件循环、消息处理
-├── config.rs        # 身份管理、命令行解析
-├── state.rs         # 全局状态（节点、消息、文件）
-├── protocol.rs      # 网络协议消息定义 (JSON)
-├── network/
-│   ├── mod.rs       # AppEvent 定义
-│   ├── server.rs    # TCP Server (入站连接)
-│   ├── connect.rs   # 主动连接 & 握手
-│   ├── peer.rs      # 单连接读写 task
-│   ├── discovery.rs # mDNS 广播与发现
-│   └── files.rs     # 本地文件扫描 & SHA256
-└── tui/
-    ├── mod.rs       # TUI 主循环、输入处理
-    ├── app.rs       # UI 状态、标签页
-    ├── chat_view.rs # 聊天视图渲染
-    └── files_view.rs# 文件视图渲染
+# 解绑： "j" = "none"
+# 多键序列： "g g" = "cursor_top"（0.1.0 可选能力）
 ```
 
-### 工作流程
+`Q` 是退出保留键，不能重映射或解绑；Compose 的 `Enter`/`Esc` 固定。
 
-1. **启动** — 加载/创建身份，扫描本地共享文件，绑定随机 TCP 端口
-2. **发现** — mDNS 注册 `_lanchat._tcp.local.` 服务并监听局域网其他节点
-3. **连接** —端口较小的一方主动建立 TCP 连接，双方交换 `Hello` 握手
-4. **通讯** — 每个连接启动独立的读写 task，JSON 换行分隔消息
-5. **聊天** — 消息通过 `msg_id` 去重后广播给所有在线节点
-6. **文件** — 连接建立后自动交换文件列表，下载请求触发 base64 编码传输
-
-### 网络协议
-
-所有消息均为单行 JSON，由 `type` 字段区分：
-
-| 类型              | 方向     | 说明                |
-| ----------------- | -------- | ------------------- |
-| `Hello`           | 双向     | TCP 握手，交换身份   |
-| `Chat`            | 广播     | 文本聊天消息         |
-| `FileListRequest` | 请求→响应 | 请求文件列表         |
-| `FileListResponse` | 响应→请求 | 文件列表 (含 SHA256) |
-| `FileRequest`     | 请求→响应 | 请求下载指定文件     |
-| `FileResponse`    | 响应→请求 | 文件内容 (base64)    |
-| `Goodbye`         | 双向     | 断开通知             |
-
-## 配置文件
-
-### 身份文件
-
-```
-~/.config/lanchat/identity.json
+```bash
+lanchat --no-config            # 忽略用户配置和键位
+lanchat --config ./config.toml # 指定配置文件
+lanchat --keymap ./keys.toml   # 指定键位文件
+lanchat --debug                # 输出 debug 日志
+lanchat --version
+lanchat --help
 ```
 
-首次运行自动生成，格式如下：
+## 中文与字体
 
-```json
-{
-  "node_id": "b4e4f2a1-...",
-  "display_name": "zhulin@arch"
-}
+TUI **不加载字体**。终端需要使用支持 CJK 的等宽字体，例如 Sarasa Mono SC、Noto Sans Mono CJK SC、Maple Mono NF CN 等，并保持 UTF-8 locale。程序用 `unicode-width` 计算 2 列宽的 CJK/emoji；字体缺字会显示 tofu（□），属于终端字体配置问题。
+
+## 已知限制（0.1.0）
+
+- 不联网：没有 peer、mDNS、TCP、在线人数（状态显示“在线 1（本机）”）。
+- 没有文件共享、多频道、私聊、多行输入、搜索/命令/帮助、主题自定义。
+- 没有鼠标操作。
+- 剪贴板优先 `arboard`，失败时尝试 OSC 52；SSH/headless 终端可能不支持。
+- Windows 未作为主要验收平台。
+- 详细需求与设计见 [docs/requ/0.1.0/README.md](docs/requ/0.1.0/README.md)。
+
+## 开发
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
-可以手动修改 `display_name` 来更改显示名。
-
-### 日志文件
-
-运行日志保存在 `log/` 目录下，按启动时间命名：
-
-```
-log/2026-05-15_10-30-00.log
-```
-
-panic 日志记录在 `log/panic.log`。
-
-## 许可证
-
-MIT
+旧版实现保留在 [`old/`](old/)，不参与编译。
