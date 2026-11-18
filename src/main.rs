@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
         match net::start(
             config.network.clone(),
             config.identity.clone(),
-            config.paths.data_dir.join("files"),
+            config.paths.files_dir.clone(),
         )
         .await
         {

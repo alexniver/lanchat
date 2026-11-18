@@ -1,8 +1,10 @@
+use std::path::Path;
+
 use crate::key::{ActionId, Keymap};
 
 /// Build the logical help lines. The UI renders these one-to-one; keep lines
 /// short enough for the minimum terminal width (60 columns, 58 inner).
-pub fn lines(keymap: &Keymap) -> Vec<String> {
+pub fn lines(keymap: &Keymap, files_dir: &Path) -> Vec<String> {
     let hint = |action| keymap.hint(action);
     let mut lines = vec![
         format!("LanChat {}", env!("CARGO_PKG_VERSION")),
@@ -37,7 +39,7 @@ pub fn lines(keymap: &Keymap) -> Vec<String> {
         "  /recv file <对方>".to_string(),
         "  - 对方可用完整 IP、最后一段、昵称".to_string(),
         "  - 请求 10 分钟未接收自动取消".to_string(),
-        "  - 保存到 ~/.local/share/lanchat/files".to_string(),
+        format!("  - 保存到 {}", files_dir.display()),
         "  - 重名另存为 a[0].png、a[1].png".to_string(),
         String::new(),
         "成员与网络".to_string(),
@@ -70,7 +72,7 @@ mod tests {
 
     #[test]
     fn help_contains_version_and_key_sections() {
-        let lines = lines(&Keymap::defaults());
+        let lines = lines(&Keymap::defaults(), Path::new("/tmp/lanchat/files"));
         let text = lines.join("\n");
         assert!(text.starts_with("LanChat "));
         assert!(text.contains("快速开始"));
@@ -84,7 +86,13 @@ mod tests {
         let map = Keymap::from_file(&crate::key::KeymapFile {
             list: std::collections::BTreeMap::from([("?".to_string(), "open_help".to_string())]),
         });
-        let text = lines(&map).join("\n");
+        let text = lines(&map, Path::new("/tmp/lanchat/files")).join("\n");
         assert!(text.contains("打开帮助"));
+    }
+    #[test]
+    fn help_shows_actual_files_dir() {
+        let path = Path::new("/custom/data/lanchat/files");
+        let text = lines(&Keymap::defaults(), path).join("\n");
+        assert!(text.contains("/custom/data/lanchat/files"));
     }
 }

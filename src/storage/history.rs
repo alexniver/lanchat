@@ -353,6 +353,7 @@ mod tests {
             keymap_file: dir.path().join("config/keymap.toml"),
             identity_file: dir.path().join("config/identity.json"),
             data_dir: dir.path().join("data"),
+            files_dir: dir.path().join("data/files"),
             history_dir: dir.path().join("data/history"),
             state_dir: dir.path().join("state"),
             log_dir: dir.path().join("state/logs"),

@@ -124,6 +124,7 @@ mod tests {
                 keymap_file: PathBuf::from("/tmp/lanchat-status-test/keymap.toml"),
                 identity_file: PathBuf::from("/tmp/lanchat-status-test/identity.json"),
                 data_dir: PathBuf::from("/tmp/lanchat-status-test/data"),
+                files_dir: PathBuf::from("/tmp/lanchat-status-test/data/files"),
                 history_dir: PathBuf::from("/tmp/lanchat-status-test/history"),
                 state_dir: PathBuf::from("/tmp/lanchat-status-test/state"),
                 log_dir: PathBuf::from("/tmp/lanchat-status-test/logs"),

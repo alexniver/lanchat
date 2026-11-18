@@ -1,8 +1,8 @@
-# LanChat 0.1.3
+# LanChat 0.1.4
 
 LanChat 是一个 **Helix 风格键位、键盘优先的局域网终端聊天工具**。它运行在终端里，不需要中心服务器，同一局域网内的节点通过 mDNS 自动发现，再用 TCP 直连聊天。
 
-0.1.3 增加内置帮助页面；0.1.2 已加入点对点文件传递。目标是“聊天、发文件、查看帮助都在终端里完成”：
+0.1.4 增加 Windows/macOS 路径与接收文件名校验；0.1.3 已加入内置帮助，0.1.2 已加入文件传递。目标是“聊天、发文件、查看帮助都在终端里完成”：
 
 - 两个 panel：消息列表 + 状态栏。
 - `i` 输入、Enter 发送、Esc 取消。
@@ -11,12 +11,13 @@ LanChat 是一个 **Helix 风格键位、键盘优先的局域网终端聊天工
 - mDNS 自动发现；mDNS 不可用时可以手动填地址。
 - 右侧成员侧边栏、在线人数、心跳和断线重连。
 - 中文/emoji 按终端显示宽度处理。
-- `/send file ... to ...` 发文件，对方 `/recv file ...` 接收；文件保存到 `~/.local/share/lanchat/files`。
+- `/send file ... to ...` 发文件，对方 `/recv file ...` 接收；文件保存到平台数据目录下的 `lanchat/files`。
 - 重名自动保存为 `a[0].png`、`a[1].png`；10 分钟未接收自动取消。
 - 在消息列表按 `?` 打开内置帮助，`j/k` 滚动，`Esc` 返回。
+- 配置/历史/接收文件使用平台目录；Windows/macOS 路径已适配。
 - 本地 JSONL 历史；重启后还能看到之前消息。
 
-> **安全提醒**：0.1.3 是明文局域网聊天/文件传递，没有加密、没有身份认证。请只在可信局域网使用，不要传输敏感信息。
+> **安全提醒**：0.1.4 是明文局域网聊天/文件传递，没有加密、没有身份认证。请只在可信局域网使用，不要传输敏感信息。
 
 ## 界面
 
@@ -177,7 +178,7 @@ lanchat --no-network
 ```
 
 - 接收该发送方全部待接收文件。
-- 文件保存到 `~/.local/share/lanchat/files`；重名自动改为 `a[0].png`、`a[1].png`。
+- 文件保存到平台数据目录下的 `lanchat/files`（Linux 为 `~/.local/share/lanchat/files`）；重名自动改为 `a[0].png`、`a[1].png`。
 - 请求 10 分钟未接收自动取消；同一文件重复请求会被拦截。
 - 文件传输走独立数据 TCP 连接，控制消息走聊天连接，避免大文件阻塞聊天。
 - 文件请求/成功/取消是系统消息，不写入聊天历史。
@@ -200,7 +201,7 @@ lanchat --no-network
 帮助状态栏示例：
 
 ```text
-按 Esc 退出帮助 · j/k 滚动 · 帮助 1/24 · LanChat 0.1.3
+按 Esc 退出帮助 · j/k 滚动 · 帮助 1/24 · LanChat 0.1.4
 ```
 
 ### 选中消息
@@ -270,17 +271,16 @@ lanchat --no-network
 
 ### 文件位置
 
-Linux 遵循 XDG：
+| 内容 | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| 配置 | `~/.config/lanchat/config.toml` | `~/Library/Application Support/lanchat/config.toml` | `%APPDATA%\lanchat\config.toml` |
+| 键位 | `~/.config/lanchat/keymap.toml` | `~/Library/Application Support/lanchat/keymap.toml` | `%APPDATA%\lanchat\keymap.toml` |
+| 身份 | `~/.config/lanchat/identity.json` | `~/Library/Application Support/lanchat/identity.json` | `%APPDATA%\lanchat\identity.json` |
+| 历史 | `~/.local/share/lanchat/history/` | `~/Library/Application Support/lanchat/history/` | `%LOCALAPPDATA%\lanchat\history\` |
+| 接收文件 | `~/.local/share/lanchat/files/` | `~/Library/Application Support/lanchat/files/` | `%LOCALAPPDATA%\lanchat\files\` |
+| 日志 | `~/.local/state/lanchat/logs/` | `~/Library/Application Support/lanchat/logs/` | `%LOCALAPPDATA%\lanchat\logs\` |
 
-| 类型 | 路径 |
-| --- | --- |
-| 配置 | `~/.config/lanchat/config.toml` |
-| 键位 | `~/.config/lanchat/keymap.toml` |
-| 身份 | `~/.config/lanchat/identity.json` |
-| 历史 | `~/.local/share/lanchat/history/` |
-| 日志 | `~/.local/state/lanchat/logs/` |
-
-macOS/Windows 使用 `dirs` 库对应的系统目录；日常使用一般不需要手动找路径。
+Linux 遵循 XDG；macOS/Windows 使用 `dirs` 库的系统目录。`--config` 只改变配置文件位置，历史/接收文件/日志仍使用平台数据目录。
 
 首次运行会自动生成 `identity.json`：
 
@@ -408,7 +408,7 @@ lanchat --connect 192.168.1.10:47731
 
 ### 安全边界
 
-0.1.3 **不提供**：
+0.1.4 **不提供**：
 
 - 加密、身份认证、前向保密；
 - 文件夹同步/自动共享；
@@ -438,7 +438,7 @@ TUI **不加载字体**。终端字体由终端模拟器提供，程序只输出
 - 没有加密/鉴权；没有历史同步；没有离线队列/ACK。
 - 单行输入；没有多行编辑。
 - 命令目前只有 `/send file`、`/recv file`；没有 `/help`、搜索、交互式教程、主题、鼠标。
-- Windows 未作为主要验收平台。
+- Windows/macOS 路径已适配，但真机验收仍待完成。
 - mDNS 依赖局域网多播；在容器/受限网络里可能需要 `--connect`。
 
 ## 故障排查
@@ -484,7 +484,7 @@ cargo test
 cargo build --release
 ```
 
-旧版实现保留在 [`old/`](old/)，不参与编译。0.1.0 的历史需求在 [docs/requ/0.1.0/README.md](docs/requ/0.1.0/README.md)，0.1.1 联网设计与决策在 [docs/0.1.1/README.md](docs/0.1.1/README.md)，0.1.2 文件传递需求在 [docs/0.1.2/README.md](docs/0.1.2/README.md)，0.1.3 帮助页面需求在 [docs/0.1.3/README.md](docs/0.1.3/README.md)。
+旧版实现保留在 [`old/`](old/)，不参与编译。0.1.0 的历史需求在 [docs/requ/0.1.0/README.md](docs/requ/0.1.0/README.md)，0.1.1 联网设计与决策在 [docs/0.1.1/README.md](docs/0.1.1/README.md)，0.1.2 文件传递需求在 [docs/0.1.2/README.md](docs/0.1.2/README.md)，0.1.3 帮助页面需求在 [docs/0.1.3/README.md](docs/0.1.3/README.md)，0.1.4 跨平台路径适配在 [docs/0.1.4/README.md](docs/0.1.4/README.md)。
 
 ## 许可证
 

@@ -83,6 +83,7 @@ pub struct Paths {
     pub keymap_file: PathBuf,
     pub identity_file: PathBuf,
     pub data_dir: PathBuf,
+    pub files_dir: PathBuf,
     pub history_dir: PathBuf,
     pub state_dir: PathBuf,
     pub log_dir: PathBuf,
@@ -95,10 +96,10 @@ impl Paths {
         keymap_override: Option<&Path>,
     ) -> Result<Self> {
         let xdg_config = dirs::config_dir()
-            .ok_or_else(|| anyhow::anyhow!("无法确定配置目录（XDG_CONFIG_HOME）"))?
+            .ok_or_else(|| anyhow::anyhow!("无法确定配置目录"))?
             .join("lanchat");
         let data_dir = dirs::data_local_dir()
-            .ok_or_else(|| anyhow::anyhow!("无法确定数据目录（XDG_DATA_HOME）"))?
+            .ok_or_else(|| anyhow::anyhow!("无法确定数据目录"))?
             .join("lanchat");
         let state_root = dirs::state_dir()
             .unwrap_or_else(|| dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")));
@@ -119,6 +120,7 @@ impl Paths {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| config_dir.join("keymap.toml"));
         let identity_file = config_dir.join("identity.json");
+        let files_dir = data_dir.join("files");
         let history_dir = data_dir.join("history");
         let log_dir = state_dir.join("logs");
 
@@ -128,6 +130,7 @@ impl Paths {
             keymap_file,
             identity_file,
             data_dir,
+            files_dir,
             history_dir,
             state_dir,
             log_dir: log_dir.clone(),
@@ -138,6 +141,7 @@ impl Paths {
     pub fn ensure_dirs(&self) -> Result<()> {
         ensure_dir(&self.config_dir)?;
         ensure_dir(&self.data_dir)?;
+        ensure_dir(&self.files_dir)?;
         ensure_dir(&self.history_dir)?;
         ensure_dir(&self.state_dir)?;
         ensure_dir(&self.log_dir)?;

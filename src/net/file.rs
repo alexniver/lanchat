@@ -262,21 +262,80 @@ pub fn sanitize_name(name: &str) -> Result<String> {
     if name.contains('/') || name.contains('\\') || name.contains('\0') {
         bail!("文件名包含路径分隔符");
     }
-    let name: String = name.chars().filter(|ch| !ch.is_control()).collect();
-    if name.is_empty() {
-        bail!("文件名不合法");
-    }
-    let mut result = String::new();
+
+    // Use the Windows-invalid set on every platform so a received file is
+    // portable and cannot create NTFS alternate data streams.
+    let mut cleaned = String::with_capacity(name.len());
     for ch in name.chars() {
-        if result.len() + ch.len_utf8() > 255 {
-            break;
+        if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*') {
+            cleaned.push('_');
+        } else {
+            cleaned.push(ch);
         }
-        result.push(ch);
     }
+    let cleaned = cleaned.trim_end_matches(['.', ' ']).trim();
+    let mut result = if cleaned.is_empty() {
+        "file".to_string()
+    } else {
+        cleaned.to_string()
+    };
+
+    if is_windows_reserved(&result) {
+        result.insert(0, '_');
+    }
+    result = truncate_name(&result);
     if result.is_empty() {
         bail!("文件名不合法");
     }
     Ok(result)
+}
+
+fn is_windows_reserved(name: &str) -> bool {
+    let stem = Path::new(name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(name);
+    let stem = stem.trim_end_matches(['.', ' ']).to_ascii_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    let bytes = stem.as_bytes();
+    if bytes.len() == 4 && (bytes[0..3] == *b"COM" || bytes[0..3] == *b"LPT") {
+        return bytes[3].is_ascii_digit() && bytes[3] != b'0';
+    }
+    false
+}
+
+fn truncate_name(name: &str) -> String {
+    const MAX_BYTES: usize = 255;
+    if name.len() <= MAX_BYTES {
+        return name.to_string();
+    }
+    let path = Path::new(name);
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| format!(".{extension}"))
+        .unwrap_or_default();
+    let extension = if extension.len() < MAX_BYTES {
+        extension
+    } else {
+        String::new()
+    };
+    let stem = name.strip_suffix(&extension).unwrap_or(name);
+    let budget = MAX_BYTES.saturating_sub(extension.len());
+    let mut end = 0;
+    for (index, ch) in stem.char_indices() {
+        if index + ch.len_utf8() > budget {
+            break;
+        }
+        end = index + ch.len_utf8();
+    }
+    let stem = if end == 0 { "file" } else { &stem[..end] };
+    format!("{stem}{extension}")
 }
 
 fn part_path(dir: &Path, name: &str, transfer_id: &str) -> PathBuf {
@@ -322,5 +381,30 @@ mod tests {
             .unwrap();
         let path = unique_path(dir.path(), "a.png").await.unwrap();
         assert_eq!(path.file_name().unwrap(), "a[0].png");
+    }
+    #[test]
+    fn sanitizes_windows_invalid_characters_and_trailing_dots() {
+        assert_eq!(sanitize_name("a:b?.png").unwrap(), "a_b_.png");
+        assert_eq!(sanitize_name("name. ").unwrap(), "name");
+        assert_eq!(sanitize_name("... ").unwrap(), "file");
+        assert_eq!(sanitize_name("中文.png").unwrap(), "中文.png");
+        assert!(sanitize_name("a/b.png").is_err());
+        assert!(sanitize_name("a\\b.png").is_err());
+    }
+
+    #[test]
+    fn avoids_windows_reserved_device_names() {
+        assert_eq!(sanitize_name("CON").unwrap(), "_CON");
+        assert_eq!(sanitize_name("con.txt").unwrap(), "_con.txt");
+        assert_eq!(sanitize_name("LPT1.log").unwrap(), "_LPT1.log");
+        assert_eq!(sanitize_name("COM0.txt").unwrap(), "COM0.txt");
+    }
+
+    #[test]
+    fn truncates_long_names_preserving_extension() {
+        let name = format!("{}.png", "a".repeat(300));
+        let safe = sanitize_name(&name).unwrap();
+        assert!(safe.len() <= 255);
+        assert!(safe.ends_with(".png"));
     }
 }

@@ -315,7 +315,7 @@ impl App {
         let mut help = HelpState {
             offset: 0,
             max_offset: 0,
-            lines: help::lines(&self.keymap),
+            lines: help::lines(&self.keymap, &self.config.paths.files_dir),
         };
         help.recalc(self.terminal_size.1);
         self.layers.push(Layer::Help(help));
@@ -1064,6 +1064,7 @@ pub(crate) fn test_app(messages: Vec<Message>) -> App {
             keymap_file: PathBuf::from("/tmp/lanchat-ui-test/keymap.toml"),
             identity_file: PathBuf::from("/tmp/lanchat-ui-test/identity.json"),
             data_dir: PathBuf::from("/tmp/lanchat-ui-test/data"),
+            files_dir: PathBuf::from("/tmp/lanchat-ui-test/files"),
             history_dir: PathBuf::from("/tmp/lanchat-ui-test/history"),
             state_dir: PathBuf::from("/tmp/lanchat-ui-test/state"),
             log_dir: PathBuf::from("/tmp/lanchat-ui-test/logs"),
@@ -1126,6 +1127,7 @@ mod tests {
                 keymap_file: PathBuf::from("/tmp/lanchat-test/keymap.toml"),
                 identity_file: PathBuf::from("/tmp/lanchat-test/identity.json"),
                 data_dir: PathBuf::from("/tmp/lanchat-test/data"),
+                files_dir: PathBuf::from("/tmp/lanchat-test/data/files"),
                 history_dir: PathBuf::from("/tmp/lanchat-test/history"),
                 state_dir: PathBuf::from("/tmp/lanchat-test/state"),
                 log_dir: PathBuf::from("/tmp/lanchat-test/logs"),

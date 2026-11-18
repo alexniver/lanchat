@@ -86,7 +86,7 @@ pub fn resolve_path(raw: &str) -> Result<PathBuf, String> {
     }
     let expanded = if raw == "~" {
         home_dir()?
-    } else if let Some(rest) = raw.strip_prefix("~/") {
+    } else if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
         home_dir()?.join(rest)
     } else {
         PathBuf::from(raw)
@@ -98,16 +98,13 @@ pub fn resolve_path(raw: &str) -> Result<PathBuf, String> {
             .map_err(|error| format!("无法读取当前目录：{error}"))?
             .join(expanded)
     };
-    absolute
-        .canonicalize()
-        .map_err(|error| format!("找不到文件 {raw}：{error}"))
+    dunce::canonicalize(&absolute).map_err(|error| format!("找不到文件 {raw}：{error}"))
 }
 
 fn home_dir() -> Result<PathBuf, String> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
+    dirs::home_dir()
         .filter(|path| !path.as_os_str().is_empty())
-        .ok_or_else(|| "无法确定用户主目录（HOME）".to_string())
+        .ok_or_else(|| "无法确定用户主目录".to_string())
 }
 
 #[cfg(test)]
@@ -179,5 +176,13 @@ mod tests {
         let path = resolve_path(".").unwrap();
         assert!(path.is_absolute());
         assert!(path.is_dir());
+    }
+    #[test]
+    fn expands_tilde_with_home_dir() {
+        let home = dirs::home_dir().expect("home dir");
+        let canonical = dunce::canonicalize(&home).unwrap();
+        assert_eq!(resolve_path("~").unwrap(), canonical);
+        assert_eq!(resolve_path("~/").unwrap(), canonical);
+        assert_eq!(resolve_path("~\\").unwrap(), canonical);
     }
 }
