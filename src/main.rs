@@ -83,6 +83,9 @@ async fn main() -> Result<()> {
     let _guard = terminal::TerminalGuard::enter()?;
     terminal::install_panic_hook(panic_log);
     let mut terminal = terminal::new_terminal()?;
+    if let Ok((width, height)) = crossterm::terminal::size() {
+        app.set_terminal_size(width, height);
+    }
 
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(200));

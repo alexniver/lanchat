@@ -23,6 +23,9 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 }
 
 pub fn status_text(app: &App) -> String {
+    if app.top_is_help() {
+        return help_status(app);
+    }
     let message_count = app.messages.len();
     let selected = app.list().and_then(|list| list.selected);
     let position = selected
@@ -63,6 +66,21 @@ pub fn status_text(app: &App) -> String {
         }
     }
     parts.join(" · ")
+}
+
+pub fn help_status(app: &App) -> String {
+    let Some(help) = app.help() else {
+        return "按 Esc 退出帮助".to_string();
+    };
+    let position = if help.max_offset == 0 {
+        "全部显示".to_string()
+    } else {
+        format!("{}/{}", help.offset + 1, help.lines.len())
+    };
+    format!(
+        "按 Esc 退出帮助 · j/k 滚动 · 帮助 {position} · LanChat {}",
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 pub fn connection_text(state: ConnectionState, enabled: bool) -> &'static str {

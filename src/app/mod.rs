@@ -1,6 +1,7 @@
 pub mod action;
 pub mod command;
 pub mod compose;
+pub mod help;
 pub mod input;
 pub mod list;
 pub mod message;
@@ -29,11 +30,27 @@ pub enum Layer {
     List(ListState),
     Compose(ComposeState),
     Members(MemberState),
+    Help(HelpState),
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MemberState {
     pub selected: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct HelpState {
+    pub offset: usize,
+    pub max_offset: usize,
+    pub lines: Vec<String>,
+}
+
+impl HelpState {
+    pub fn recalc(&mut self, terminal_height: u16) {
+        let viewport = terminal_height.saturating_sub(5).max(1) as usize;
+        self.max_offset = self.lines.len().saturating_sub(viewport);
+        self.offset = self.offset.min(self.max_offset);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +83,7 @@ pub struct App {
     pending_at: Option<Instant>,
     member_space: bool,
     outgoing_files: BTreeMap<String, (String, String)>,
+    terminal_size: (u16, u16),
     dirty: bool,
     should_quit: bool,
 }
@@ -124,6 +142,7 @@ impl App {
             pending_at: None,
             member_space: false,
             outgoing_files: BTreeMap::new(),
+            terminal_size: (80, 24),
             dirty: true,
             should_quit: false,
         }
@@ -147,6 +166,17 @@ impl App {
 
     pub fn top_is_members(&self) -> bool {
         matches!(self.layers.last(), Some(Layer::Members(_)))
+    }
+
+    pub fn top_is_help(&self) -> bool {
+        matches!(self.layers.last(), Some(Layer::Help(_)))
+    }
+
+    pub fn help(&self) -> Option<&HelpState> {
+        match self.layers.last() {
+            Some(Layer::Help(help)) => Some(help),
+            _ => None,
+        }
     }
 
     pub fn network_enabled(&self) -> bool {
@@ -197,15 +227,17 @@ impl App {
                     self.dirty = true;
                 }
             }
-            Event::Resize(_, _) => {
-                self.dirty = true;
+            Event::Resize(width, height) => {
+                self.set_terminal_size(width, height);
             }
             _ => {}
         }
     }
 
     pub fn handle_key(&mut self, key: Key) {
-        if self.top_is_compose() {
+        if self.top_is_help() {
+            self.handle_help_key(key);
+        } else if self.top_is_compose() {
             self.handle_compose_key(key);
         } else if self.top_is_members() {
             self.handle_members_key(key);
@@ -268,10 +300,61 @@ impl App {
         self.dirty = true;
     }
 
+    pub fn set_terminal_size(&mut self, width: u16, height: u16) {
+        self.terminal_size = (width, height);
+        if let Some(Layer::Help(help)) = self.layers.last_mut() {
+            help.recalc(height);
+        }
+        self.dirty = true;
+    }
+
+    fn open_help(&mut self) {
+        if self.top_is_help() {
+            return;
+        }
+        let mut help = HelpState {
+            offset: 0,
+            max_offset: 0,
+            lines: help::lines(&self.keymap),
+        };
+        help.recalc(self.terminal_size.1);
+        self.layers.push(Layer::Help(help));
+        self.status = None;
+        self.dirty = true;
+    }
+
+    fn close_help(&mut self) {
+        if self.top_is_help() {
+            self.layers.pop();
+        }
+        self.status = None;
+        self.dirty = true;
+    }
+
+    fn handle_help_key(&mut self, key: Key) {
+        match key {
+            Key::Esc => self.close_help(),
+            Key::Char('j') => self.scroll_help(1),
+            Key::Char('k') => self.scroll_help(-1),
+            _ => {}
+        }
+    }
+
+    fn scroll_help(&mut self, delta: i32) {
+        if let Some(Layer::Help(help)) = self.layers.last_mut() {
+            let next = (help.offset as i32 + delta).clamp(0, help.max_offset as i32) as usize;
+            if next != help.offset {
+                help.offset = next;
+                self.dirty = true;
+            }
+        }
+    }
+
     fn apply_list_action(&mut self, action: ActionId) {
         match action {
             ActionId::OpenCompose => self.open_compose(""),
             ActionId::OpenCommand => self.open_compose("/"),
+            ActionId::OpenHelp => self.open_help(),
             ActionId::CursorDown => {
                 let len = self.messages.len();
                 if let Some(list) = self.list_mut() {
@@ -1424,5 +1507,83 @@ mod tests {
             Effect::SendFile { name, size, .. } if name == "a.png" && *size == 3
         )));
         assert!(!app.top_is_compose());
+    }
+    #[test]
+    fn help_opens_and_restores_list_selection() {
+        let mut app = app_with(vec![message("one"), message("two")]);
+        app.handle_key(Key::Char('k'));
+        let selected = app.list().unwrap().selected;
+        assert!(!app.list().unwrap().follow_latest);
+
+        app.handle_key(Key::Char('?'));
+        assert!(app.top_is_help());
+        assert_eq!(app.help().unwrap().offset, 0);
+        assert!(app.take_effects().is_empty());
+        assert_eq!(app.list().unwrap().selected, selected);
+
+        app.handle_key(Key::Esc);
+        assert!(!app.top_is_help());
+        assert_eq!(app.list().unwrap().selected, selected);
+        assert!(!app.list().unwrap().follow_latest);
+    }
+
+    #[test]
+    fn help_scrolls_and_clamps() {
+        let mut app = app_with(vec![]);
+        app.set_terminal_size(80, 15);
+        app.handle_key(Key::Char('?'));
+        let max_offset = app.help().unwrap().max_offset;
+        assert!(max_offset > 0);
+        for _ in 0..max_offset + 5 {
+            app.handle_key(Key::Char('j'));
+        }
+        assert_eq!(app.help().unwrap().offset, max_offset);
+        for _ in 0..max_offset + 5 {
+            app.handle_key(Key::Char('k'));
+        }
+        assert_eq!(app.help().unwrap().offset, 0);
+    }
+
+    #[test]
+    fn help_ignores_q_and_list_actions() {
+        let mut app = app_with(vec![message("one")]);
+        app.handle_key(Key::Char('?'));
+        app.handle_key(Key::Char('Q'));
+        app.handle_key(Key::Char('i'));
+        app.handle_key(Key::Char('/'));
+        app.handle_key(Key::Char('y'));
+        assert!(!app.should_quit());
+        assert!(app.top_is_help());
+        assert!(app.take_effects().is_empty());
+    }
+
+    #[test]
+    fn question_mark_is_text_in_compose_and_ignored_in_members() {
+        let mut app = app_with(vec![]);
+        app.handle_key(Key::Char('?'));
+        app.handle_key(Key::Esc);
+        app.handle_key(Key::Char('i'));
+        app.handle_key(Key::Char('?'));
+        let Layer::Compose(compose) = app.layers.last().unwrap() else {
+            panic!("compose expected");
+        };
+        assert_eq!(compose.input.text, "?");
+        app.handle_key(Key::Esc);
+        app.handle_key(Key::Space);
+        app.handle_key(Key::Char('u'));
+        assert!(app.top_is_members());
+        app.handle_key(Key::Char('?'));
+        assert!(app.top_is_members());
+        assert!(!app.top_is_help());
+    }
+
+    #[test]
+    fn help_status_has_escape_and_version_but_no_online_count() {
+        let mut app = app_with(vec![]);
+        app.handle_key(Key::Char('?'));
+        let status = crate::ui::status::status_text(&app);
+        assert!(status.contains("按 Esc 退出帮助"));
+        assert!(status.contains("LanChat"));
+        assert!(!status.contains("在线"));
     }
 }

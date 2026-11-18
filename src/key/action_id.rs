@@ -6,6 +6,7 @@ use anyhow::{bail, Result};
 pub enum ActionId {
     OpenCompose,
     OpenCommand,
+    OpenHelp,
     CursorDown,
     CursorUp,
     CopyBody,
@@ -22,6 +23,7 @@ impl ActionId {
         Ok(match value {
             "open_compose" => Self::OpenCompose,
             "open_command" => Self::OpenCommand,
+            "open_help" => Self::OpenHelp,
             "cursor_down" => Self::CursorDown,
             "cursor_up" => Self::CursorUp,
             "copy_body" => Self::CopyBody,
@@ -39,6 +41,7 @@ impl ActionId {
         match self {
             Self::OpenCompose => "open_compose",
             Self::OpenCommand => "open_command",
+            Self::OpenHelp => "open_help",
             Self::CursorDown => "cursor_down",
             Self::CursorUp => "cursor_up",
             Self::CopyBody => "copy_body",
@@ -67,6 +70,7 @@ mod tests {
         for action in [
             ActionId::OpenCompose,
             ActionId::OpenCommand,
+            ActionId::OpenHelp,
             ActionId::CursorDown,
             ActionId::CursorUp,
             ActionId::CopyBody,

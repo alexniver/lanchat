@@ -1,3 +1,4 @@
+pub mod help;
 pub mod input;
 pub mod layout;
 pub mod list;
@@ -22,12 +23,16 @@ pub fn render(f: &mut Frame, app: &App) {
         return;
     };
 
-    list::render(f, areas.list, app);
-    if let Some(compose_area) = areas.compose {
-        input::render(f, compose_area, app);
-    }
-    if let Some(members_area) = areas.members {
-        members::render(f, members_area, app);
+    if app.top_is_help() {
+        help::render(f, areas.list, app);
+    } else {
+        list::render(f, areas.list, app);
+        if let Some(compose_area) = areas.compose {
+            input::render(f, compose_area, app);
+        }
+        if let Some(members_area) = areas.members {
+            members::render(f, members_area, app);
+        }
     }
     status::render(f, areas.status, app);
 }
@@ -96,6 +101,22 @@ mod tests {
         assert!(text.contains("bob@arch"));
         assert!(text.contains("(you)"));
         assert!(text.contains("在线2"));
+    }
+
+    #[test]
+    fn renders_help_panel_and_status() {
+        let mut app = test_app(vec![Message::new("alice@arch", "你好")]);
+        app.handle_key(Key::Char('?'));
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let text = buffer_text(terminal.backend().buffer()).replace(' ', "");
+        assert!(text.contains("帮助"));
+        assert!(text.contains("快速开始"));
+        assert!(text.contains("按Esc退出帮助"));
+        assert!(text.contains("LanChat0.1.3"));
+        assert!(!text.contains("信息列表"));
+        assert!(!text.contains("在线1"));
     }
 
     #[test]
