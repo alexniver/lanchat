@@ -4,7 +4,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, Message};
+use crate::app::{App, Message, MessageKind};
 use crate::ui::text::wrap_text;
 use crate::ui::theme;
 
@@ -43,13 +43,18 @@ fn build_lines(
     }
     for (index, message) in messages.iter().enumerate() {
         let start = lines.len();
+        let base = if message.kind == MessageKind::System {
+            Style::default().fg(theme::MUTED)
+        } else {
+            Style::default()
+        };
         let style = if selected == Some(index) {
             Style::default()
                 .bg(theme::SELECTED_BG)
                 .fg(theme::SELECTED_FG)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default()
+            base
         };
         for text in wrap_text(&message.format_line(), width) {
             lines.push(Line::from(text).style(style));

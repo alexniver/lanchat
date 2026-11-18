@@ -3,6 +3,7 @@ use super::{ActionId, Binding, Key};
 pub fn bindings() -> Vec<Binding> {
     vec![
         binding(&["i"], ActionId::OpenCompose),
+        binding(&["/"], ActionId::OpenCommand),
         binding(&["j"], ActionId::CursorDown),
         binding(&["k"], ActionId::CursorUp),
         binding(&["y"], ActionId::CopyBody),

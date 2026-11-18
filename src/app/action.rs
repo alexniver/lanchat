@@ -5,8 +5,24 @@ use crate::app::message::Message;
 #[derive(Debug, Clone)]
 pub enum Effect {
     Persist(Message),
-    Copy { text: String },
-    SendChat { msg_id: String, body: String },
+    Copy {
+        text: String,
+    },
+    SendChat {
+        msg_id: String,
+        body: String,
+    },
+    SendFile {
+        node_id: String,
+        transfer_id: String,
+        path: std::path::PathBuf,
+        name: String,
+        size: u64,
+    },
+    AcceptFiles {
+        node_id: String,
+        transfer_ids: Vec<String>,
+    },
     Reconnect,
     Disconnect,
 }

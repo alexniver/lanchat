@@ -5,6 +5,7 @@ use anyhow::{bail, Result};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ActionId {
     OpenCompose,
+    OpenCommand,
     CursorDown,
     CursorUp,
     CopyBody,
@@ -20,6 +21,7 @@ impl ActionId {
     pub fn parse(value: &str) -> Result<Self> {
         Ok(match value {
             "open_compose" => Self::OpenCompose,
+            "open_command" => Self::OpenCommand,
             "cursor_down" => Self::CursorDown,
             "cursor_up" => Self::CursorUp,
             "copy_body" => Self::CopyBody,
@@ -36,6 +38,7 @@ impl ActionId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::OpenCompose => "open_compose",
+            Self::OpenCommand => "open_command",
             Self::CursorDown => "cursor_down",
             Self::CursorUp => "cursor_up",
             Self::CopyBody => "copy_body",
@@ -63,6 +66,7 @@ mod tests {
     fn roundtrips_action_names() {
         for action in [
             ActionId::OpenCompose,
+            ActionId::OpenCommand,
             ActionId::CursorDown,
             ActionId::CursorUp,
             ActionId::CopyBody,

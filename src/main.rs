@@ -47,7 +47,13 @@ async fn main() -> Result<()> {
 
     let mut network_error = None;
     let (net_handle, mut net_rx) = if config.network.enabled {
-        match net::start(config.network.clone(), config.identity.clone()).await {
+        match net::start(
+            config.network.clone(),
+            config.identity.clone(),
+            config.paths.data_dir.join("files"),
+        )
+        .await
+        {
             Ok((handle, rx)) => (Some(handle), Some(rx)),
             Err(error) => {
                 config.network.enabled = false;
@@ -126,6 +132,38 @@ async fn main() -> Result<()> {
                             msg_id,
                             reason: "网络未启用".to_string(),
                         });
+                    }
+                }
+                Effect::SendFile {
+                    node_id,
+                    transfer_id,
+                    path,
+                    name,
+                    size,
+                } => {
+                    if let Some(handle) = &net_handle {
+                        let _ = handle
+                            .send(NetCommand::SendFile {
+                                node_id,
+                                transfer_id,
+                                path,
+                                name,
+                                size,
+                            })
+                            .await;
+                    }
+                }
+                Effect::AcceptFiles {
+                    node_id,
+                    transfer_ids,
+                } => {
+                    if let Some(handle) = &net_handle {
+                        let _ = handle
+                            .send(NetCommand::AcceptFiles {
+                                node_id,
+                                transfer_ids,
+                            })
+                            .await;
                     }
                 }
                 Effect::Reconnect => {

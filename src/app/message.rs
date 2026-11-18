@@ -3,9 +3,18 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_BODY_BYTES: usize = 16 * 1024;
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MessageKind {
+    #[default]
+    User,
+    System,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message {
     pub id: String,
+    #[serde(default)]
+    pub kind: MessageKind,
     /// Peer node id; empty for older/local records without a source.
     #[serde(default)]
     pub from: String,
@@ -23,6 +32,7 @@ impl Message {
         let timestamp = Local::now().to_rfc3339();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
+            kind: MessageKind::User,
             from: String::new(),
             name: name.into(),
             timestamp: timestamp.clone(),
@@ -34,11 +44,25 @@ impl Message {
     pub fn remote(chat: &crate::net::protocol::Chat) -> Self {
         Self {
             id: chat.msg_id.clone(),
+            kind: MessageKind::User,
             from: chat.from.clone(),
             name: chat.name.clone(),
             timestamp: Local::now().to_rfc3339(),
             sent_at: chat.sent_at.clone(),
             body: normalize_body(&chat.body),
+        }
+    }
+
+    pub fn system(body: impl Into<String>) -> Self {
+        let timestamp = Local::now().to_rfc3339();
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: MessageKind::System,
+            from: String::new(),
+            name: "系统".to_string(),
+            timestamp: timestamp.clone(),
+            sent_at: timestamp,
+            body: normalize_body(&body.into()),
         }
     }
 
@@ -53,12 +77,11 @@ impl Message {
     }
 
     pub fn format_line(&self) -> String {
-        format!(
-            "[{}][{}]: {}",
-            self.name,
-            self.display_datetime(),
-            self.body
-        )
+        let name = match self.kind {
+            MessageKind::User => self.name.as_str(),
+            MessageKind::System => "系统",
+        };
+        format!("[{}][{}]: {}", name, self.display_datetime(), self.body)
     }
 }
 
@@ -87,6 +110,7 @@ mod tests {
     fn formats_line_as_required() {
         let message = Message {
             id: "id".into(),
+            kind: MessageKind::User,
             from: String::new(),
             name: "alice@arch".into(),
             timestamp: "2026-11-19T10:30:05+08:00".into(),
@@ -97,6 +121,14 @@ mod tests {
         assert!(line.starts_with("[alice@arch]["));
         assert!(line.ends_with("]: 你好"));
         assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn system_messages_have_their_own_prefix() {
+        let message = Message::system("接收完成");
+        assert_eq!(message.kind, MessageKind::System);
+        assert!(message.format_line().starts_with("[系统]["));
+        assert!(message.format_line().ends_with("]: 接收完成"));
     }
 
     #[test]

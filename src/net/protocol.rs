@@ -19,6 +19,15 @@ pub enum WireMessage {
     Pong(Pong),
     Bye(Bye),
     Error(ProtocolError),
+    FileOffer(FileOffer),
+    FileAccept(FileAccept),
+    FileDataHello(FileDataHello),
+    FileDataReady(FileDataReady),
+    FileChunk(FileChunk),
+    FileDataDone(FileDataDone),
+    FileComplete(FileComplete),
+    FileCancel(FileCancel),
+    FileError(FileError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -120,6 +129,77 @@ where
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileOffer {
+    pub transfer_id: String,
+    pub name: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileAccept {
+    pub transfer_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileDataHello {
+    pub node_id: String,
+    pub transfer_ids: Vec<String>,
+    pub nonce: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileDataReady {
+    pub transfer_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileChunk {
+    pub transfer_id: String,
+    pub seq: u64,
+    /// base64-encoded bytes; <= 16 KiB raw.
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileDataDone {
+    pub transfer_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileComplete {
+    pub transfer_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileCancel {
+    pub transfer_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileError {
+    pub transfer_id: String,
+    pub code: String,
+    pub message: String,
+}
+
+pub fn validate_file_offer(offer: &FileOffer) -> Result<()> {
+    if offer.transfer_id.trim().is_empty() {
+        bail!("transfer_id 为空");
+    }
+    if offer.name.trim().is_empty() || offer.name.len() > 255 {
+        bail!("文件名不合法");
+    }
+    if offer.name.contains('/') || offer.name.contains('\\') || offer.name.contains('\0') {
+        bail!("文件名包含路径分隔符");
+    }
+    if offer.name == "." || offer.name == ".." {
+        bail!("文件名不合法");
+    }
+    Ok(())
+}
+
 pub fn validate_hello(hello: &Hello, local_node_id: &str) -> Result<()> {
     if hello.magic != MAGIC {
         bail!("magic 不匹配");
@@ -171,7 +251,7 @@ mod tests {
             protocol: PROTOCOL_VERSION,
             node_id: "node-a".into(),
             name: "alice@arch".into(),
-            version: "0.1.1".into(),
+            version: "0.1.2".into(),
             listen_port: 47731,
             capabilities: vec!["chat".into()],
             nonce: "nonce".into(),
@@ -207,6 +287,42 @@ mod tests {
                 code: "x".into(),
                 message: "y".into(),
             }),
+            WireMessage::FileOffer(FileOffer {
+                transfer_id: "t1".into(),
+                name: "a.png".into(),
+                size: 123,
+            }),
+            WireMessage::FileAccept(FileAccept {
+                transfer_ids: vec!["t1".into()],
+            }),
+            WireMessage::FileDataHello(FileDataHello {
+                node_id: "node-a".into(),
+                transfer_ids: vec!["t1".into()],
+                nonce: "n".into(),
+            }),
+            WireMessage::FileDataReady(FileDataReady {
+                transfer_ids: vec!["t1".into()],
+            }),
+            WireMessage::FileChunk(FileChunk {
+                transfer_id: "t1".into(),
+                seq: 0,
+                data: "YWJj".into(),
+            }),
+            WireMessage::FileDataDone(FileDataDone {
+                transfer_ids: vec!["t1".into()],
+            }),
+            WireMessage::FileComplete(FileComplete {
+                transfer_id: "t1".into(),
+            }),
+            WireMessage::FileCancel(FileCancel {
+                transfer_id: "t1".into(),
+                reason: "timeout".into(),
+            }),
+            WireMessage::FileError(FileError {
+                transfer_id: "t1".into(),
+                code: "x".into(),
+                message: "y".into(),
+            }),
         ] {
             let encoded = encode_frame(&message).unwrap();
             let length = u32::from_be_bytes(encoded[..4].try_into().unwrap()) as usize;
@@ -220,6 +336,18 @@ mod tests {
         assert!(validate_hello(&hello(), "node-b").is_ok());
         assert!(validate_hello(&hello(), "node-a").is_err());
         assert!(validate_chat(&chat()).is_ok());
+        assert!(validate_file_offer(&FileOffer {
+            transfer_id: "t1".into(),
+            name: "a.png".into(),
+            size: 1
+        })
+        .is_ok());
+        assert!(validate_file_offer(&FileOffer {
+            transfer_id: "t1".into(),
+            name: "../a.png".into(),
+            size: 1
+        })
+        .is_err());
         let mut bad = chat();
         bad.body = "x".repeat(MAX_BODY_BYTES + 1);
         assert!(validate_chat(&bad).is_err());

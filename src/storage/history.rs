@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 
-use crate::app::message::Message;
+use crate::app::message::{Message, MessageKind};
 use crate::config::{HistoryConfig, Paths};
 
 const HISTORY_PREFIX: &str = "lobby-";
@@ -194,6 +194,7 @@ fn append_sync(dir: &Path, max_bytes: u64, message: &Message) -> Result<()> {
     set_file_mode(&path, 0o600);
     let record = HistoryRecord {
         v: 1,
+        kind: message.kind,
         id: message.id.clone(),
         room: "lobby".to_string(),
         from: message.from.clone(),
@@ -248,6 +249,8 @@ struct HistoryRecord {
     #[serde(default = "default_version")]
     v: u8,
     #[serde(default)]
+    kind: MessageKind,
+    #[serde(default)]
     id: String,
     #[serde(default = "default_room")]
     room: String,
@@ -270,6 +273,7 @@ impl HistoryRecord {
         }
         Some(Message {
             id: self.id,
+            kind: self.kind,
             from: self.from,
             name: self.name,
             timestamp: self.timestamp,

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -11,9 +12,11 @@ use tokio::time::timeout;
 
 use crate::config::{Identity, NetworkConfig};
 use crate::net::discovery::{self, Discovery, DiscoveryEvent};
+use crate::net::file::{self, IncomingFile, OutgoingFile};
 use crate::net::protocol::{
-    read_frame, validate_chat, validate_hello, write_frame, Bye, Chat, Hello, Ping, Pong, Ready,
-    WireMessage, MAGIC, MAX_BODY_BYTES, PROTOCOL_VERSION, ROOM,
+    read_frame, validate_chat, validate_file_offer, validate_hello, write_frame, Bye, Chat,
+    FileAccept, FileCancel, FileComplete, FileDataHello, FileError, FileOffer, Hello, Ping, Pong,
+    Ready, WireMessage, MAGIC, MAX_BODY_BYTES, PROTOCOL_VERSION, ROOM,
 };
 
 const CHANNEL_CAPACITY: usize = 64;
@@ -23,6 +26,7 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const MAX_SEEN: usize = 10_000;
 const MAX_PEERS: usize = 64;
+const FILE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -35,7 +39,21 @@ pub enum ConnectionState {
 
 #[derive(Debug, Clone)]
 pub enum NetCommand {
-    SendChat { msg_id: String, body: String },
+    SendChat {
+        msg_id: String,
+        body: String,
+    },
+    SendFile {
+        node_id: String,
+        transfer_id: String,
+        path: PathBuf,
+        name: String,
+        size: u64,
+    },
+    AcceptFiles {
+        node_id: String,
+        transfer_ids: Vec<String>,
+    },
     Reconnect,
     Disconnect,
     Shutdown,
@@ -56,6 +74,55 @@ pub enum NetEvent {
     SendFailed {
         msg_id: String,
         reason: String,
+    },
+    FileOfferReceived {
+        node_id: String,
+        peer_name: String,
+        addr: SocketAddr,
+        transfer_id: String,
+        file_name: String,
+        size: u64,
+    },
+    FileOfferSent {
+        node_id: String,
+        transfer_id: String,
+        file_name: String,
+    },
+    FileAccepted {
+        node_id: String,
+        transfer_ids: Vec<String>,
+    },
+    FileReceived {
+        node_id: String,
+        transfer_id: String,
+        file_name: String,
+        path: PathBuf,
+    },
+    FileSent {
+        node_id: String,
+        transfer_id: String,
+        file_name: String,
+    },
+    FileFailed {
+        node_id: String,
+        transfer_id: String,
+        file_name: String,
+        reason: String,
+    },
+    FileCancelled {
+        node_id: String,
+        transfer_id: String,
+        file_name: String,
+        reason: String,
+    },
+    FileTimedOut {
+        node_id: String,
+        transfer_id: String,
+        file_name: String,
+        outgoing: bool,
+    },
+    FileCommandError {
+        message: String,
     },
     Status {
         state: ConnectionState,
@@ -86,7 +153,26 @@ enum PeerEvent {
         name: String,
         addr: SocketAddr,
         listen_port: u16,
+        capabilities: Vec<String>,
         stream: TcpStream,
+    },
+    DataHello {
+        addr: SocketAddr,
+        hello: FileDataHello,
+        stream: TcpStream,
+    },
+    DataReceived {
+        node_id: String,
+        received: Vec<file::ReceivedFile>,
+    },
+    DataSent {
+        node_id: String,
+        transfer_ids: Vec<String>,
+    },
+    DataFailed {
+        node_id: String,
+        transfer_ids: Vec<String>,
+        reason: String,
     },
     Message {
         node_id: String,
@@ -113,8 +199,25 @@ struct PeerEntry {
     addr: SocketAddr,
     tx: mpsc::Sender<WireMessage>,
     close: watch::Sender<bool>,
+    supports_files: bool,
     last_seen: Instant,
     last_ping: Instant,
+}
+
+struct OutgoingOffer {
+    node_id: String,
+    name: String,
+    path: PathBuf,
+    created: Instant,
+    transferring: bool,
+}
+
+struct IncomingOffer {
+    node_id: String,
+    name: String,
+    size: u64,
+    created: Instant,
+    accepted: bool,
 }
 
 struct ReconnectState {
@@ -141,6 +244,9 @@ struct Manager {
     connecting_addrs: HashSet<SocketAddr>,
     reconnects: HashMap<String, ReconnectState>,
     deferred: HashMap<String, Instant>,
+    files_dir: PathBuf,
+    outgoing: HashMap<String, OutgoingOffer>,
+    incoming: HashMap<String, IncomingOffer>,
     seen: HashSet<String>,
     seen_order: VecDeque<String>,
     seq: u64,
@@ -151,6 +257,7 @@ struct Manager {
 pub async fn start(
     config: NetworkConfig,
     identity: Identity,
+    files_dir: PathBuf,
 ) -> Result<(NetHandle, mpsc::Receiver<NetEvent>)> {
     let (event_tx, event_rx) = mpsc::channel(CHANNEL_CAPACITY);
     let (command_tx, command_rx) = mpsc::channel(CHANNEL_CAPACITY);
@@ -168,6 +275,9 @@ pub async fn start(
         .await
         .with_context(|| format!("监听端口 {} 失败", config.port))?;
     let local_port = listener.local_addr()?.port();
+    tokio::fs::create_dir_all(&files_dir)
+        .await
+        .with_context(|| format!("创建文件目录失败: {}", files_dir.display()))?;
 
     let (discovery_tx, discovery_rx) = mpsc::channel(CHANNEL_CAPACITY);
     let discovery = if config.mdns {
@@ -212,6 +322,9 @@ pub async fn start(
         connecting_addrs: HashSet::new(),
         reconnects: HashMap::new(),
         deferred: HashMap::new(),
+        files_dir,
+        outgoing: HashMap::new(),
+        incoming: HashMap::new(),
         seen: HashSet::new(),
         seen_order: VecDeque::new(),
         seq: 0,
@@ -280,6 +393,24 @@ impl Manager {
         match command {
             NetCommand::SendChat { msg_id, body } => {
                 self.send_chat(msg_id, body).await;
+                false
+            }
+            NetCommand::SendFile {
+                node_id,
+                transfer_id,
+                path,
+                name,
+                size,
+            } => {
+                self.send_file_offer(node_id, transfer_id, path, name, size)
+                    .await;
+                false
+            }
+            NetCommand::AcceptFiles {
+                node_id,
+                transfer_ids,
+            } => {
+                self.accept_files(node_id, transfer_ids).await;
                 false
             }
             NetCommand::Reconnect => {
@@ -372,6 +503,126 @@ impl Manager {
         }
     }
 
+    async fn send_file_offer(
+        &mut self,
+        node_id: String,
+        transfer_id: String,
+        path: PathBuf,
+        name: String,
+        size: u64,
+    ) {
+        let Some(peer) = self.peers.get(&node_id) else {
+            self.file_command_error("对方不在线".to_string()).await;
+            return;
+        };
+        if !peer.supports_files {
+            self.file_command_error("对方版本不支持文件传递，请升级后重试".to_string())
+                .await;
+            return;
+        }
+        if size > file::MAX_FILE_BYTES {
+            self.file_command_error("文件太大（上限 1 GiB）".to_string())
+                .await;
+            return;
+        }
+        if self
+            .outgoing
+            .values()
+            .any(|offer| offer.node_id == node_id && offer.name == name && offer.transferring)
+        {
+            self.file_command_error(format!(
+                "{name} 的请求已经发给对方了，请等对方接收完成后再发。"
+            ))
+            .await;
+            return;
+        }
+        if self
+            .outgoing
+            .values()
+            .any(|offer| offer.node_id == node_id && offer.name == name)
+        {
+            self.file_command_error(format!(
+                "{name} 的请求已经发给对方了，请等对方接收完成后再发。"
+            ))
+            .await;
+            return;
+        }
+        let offer = FileOffer {
+            transfer_id: transfer_id.clone(),
+            name: name.clone(),
+            size,
+        };
+        if validate_file_offer(&offer).is_err() {
+            self.file_command_error("文件名不合法".to_string()).await;
+            return;
+        }
+        let Some(peer) = self.peers.get(&node_id) else {
+            self.file_command_error("对方不在线".to_string()).await;
+            return;
+        };
+        if peer.tx.try_send(WireMessage::FileOffer(offer)).is_err() {
+            self.file_command_error("发送文件请求失败".to_string())
+                .await;
+            return;
+        }
+        self.outgoing.insert(
+            transfer_id.clone(),
+            OutgoingOffer {
+                node_id: node_id.clone(),
+                name: name.clone(),
+                path,
+                created: Instant::now(),
+                transferring: false,
+            },
+        );
+        let _ = self
+            .events
+            .send(NetEvent::FileOfferSent {
+                node_id,
+                transfer_id,
+                file_name: name,
+            })
+            .await;
+    }
+
+    async fn accept_files(&mut self, node_id: String, transfer_ids: Vec<String>) {
+        let mut accepted = Vec::new();
+        for id in transfer_ids {
+            let Some(offer) = self.incoming.get_mut(&id) else {
+                continue;
+            };
+            if offer.node_id != node_id || offer.accepted {
+                continue;
+            }
+            offer.accepted = true;
+            accepted.push(id);
+        }
+        if accepted.is_empty() {
+            self.file_command_error("没有来自该用户的待接收文件。".to_string())
+                .await;
+            return;
+        }
+        if let Some(peer) = self.peers.get(&node_id) {
+            let _ = peer.tx.try_send(WireMessage::FileAccept(FileAccept {
+                transfer_ids: accepted.clone(),
+            }));
+        }
+        let _ = self
+            .events
+            .send(NetEvent::FileAccepted {
+                node_id,
+                transfer_ids: accepted,
+            })
+            .await;
+    }
+
+    async fn file_command_error(&self, message: String) {
+        let _ = self
+            .events
+            .send(NetEvent::FileCommandError { message })
+            .await;
+    }
+
     async fn handle_peer_event(&mut self, event: PeerEvent) {
         match event {
             PeerEvent::Connected {
@@ -379,6 +630,7 @@ impl Manager {
                 name,
                 addr,
                 listen_port,
+                capabilities,
                 stream,
             } => {
                 self.connecting_nodes.remove(&node_id);
@@ -443,6 +695,7 @@ impl Manager {
                         addr: listen_addr,
                         tx: peer_tx,
                         close: close_tx,
+                        supports_files: capabilities.iter().any(|item| item == "file_transfer"),
                         last_seen: Instant::now(),
                         last_ping: Instant::now(),
                     },
@@ -465,6 +718,68 @@ impl Manager {
             }
             PeerEvent::Closed { node_id, reason } => {
                 self.remove_peer(&node_id, &reason).await;
+            }
+            PeerEvent::DataHello {
+                addr,
+                hello,
+                stream,
+            } => {
+                self.handle_data_hello(addr, hello, stream).await;
+            }
+            PeerEvent::DataReceived { node_id, received } => {
+                for file in received {
+                    if let Some(peer) = self.peers.get(&node_id) {
+                        let _ = peer.tx.try_send(WireMessage::FileComplete(FileComplete {
+                            transfer_id: file.transfer_id.clone(),
+                        }));
+                    }
+                    self.incoming.remove(&file.transfer_id);
+                    let _ = self
+                        .events
+                        .send(NetEvent::FileReceived {
+                            node_id: node_id.clone(),
+                            transfer_id: file.transfer_id,
+                            file_name: file.name,
+                            path: file.path,
+                        })
+                        .await;
+                }
+            }
+            PeerEvent::DataSent {
+                node_id,
+                transfer_ids,
+            } => {
+                let _ = (node_id, transfer_ids);
+            }
+            PeerEvent::DataFailed {
+                node_id,
+                transfer_ids,
+                reason,
+            } => {
+                for transfer_id in transfer_ids {
+                    let name = self
+                        .outgoing
+                        .remove(&transfer_id)
+                        .map(|offer| offer.name)
+                        .or_else(|| self.incoming.remove(&transfer_id).map(|offer| offer.name))
+                        .unwrap_or_else(|| "文件".to_string());
+                    if let Some(peer) = self.peers.get(&node_id) {
+                        let _ = peer.tx.try_send(WireMessage::FileError(FileError {
+                            transfer_id: transfer_id.clone(),
+                            code: "transfer_failed".to_string(),
+                            message: reason.clone(),
+                        }));
+                    }
+                    let _ = self
+                        .events
+                        .send(NetEvent::FileFailed {
+                            node_id: node_id.clone(),
+                            transfer_id,
+                            file_name: name,
+                            reason: reason.clone(),
+                        })
+                        .await;
+                }
             }
             PeerEvent::HandshakeFailed {
                 addr,
@@ -495,6 +810,74 @@ impl Manager {
         }
     }
 
+    async fn handle_data_hello(
+        &mut self,
+        addr: SocketAddr,
+        hello: FileDataHello,
+        stream: TcpStream,
+    ) {
+        let Some(peer) = self.peers.get(&hello.node_id) else {
+            return;
+        };
+        if !peer.supports_files {
+            return;
+        }
+        let expected: Vec<IncomingFile> = hello
+            .transfer_ids
+            .iter()
+            .filter_map(|id| {
+                self.incoming.get(id).and_then(|offer| {
+                    (offer.node_id == hello.node_id && offer.accepted).then(|| IncomingFile {
+                        transfer_id: id.clone(),
+                        name: offer.name.clone(),
+                        size: offer.size,
+                    })
+                })
+            })
+            .collect();
+        if expected.len() != hello.transfer_ids.len() {
+            let mut stream = stream;
+            let _ = write_frame(
+                &mut stream,
+                &WireMessage::FileError(FileError {
+                    transfer_id: String::new(),
+                    code: "not_accepted".to_string(),
+                    message: "数据连接包含未接受的文件".to_string(),
+                }),
+            )
+            .await;
+            return;
+        }
+        let events = self.peer_tx.clone();
+        let dir = self.files_dir.clone();
+        let node_id = hello.node_id.clone();
+        let ids = hello.transfer_ids.clone();
+        let _ = addr;
+        let peer_node = node_id.clone();
+        tokio::spawn(async move {
+            match file::receive_files(stream, hello, &expected, &dir).await {
+                Ok(received) => {
+                    let _ = events
+                        .send(PeerEvent::DataReceived {
+                            node_id: peer_node,
+                            received,
+                        })
+                        .await;
+                }
+                Err(error) => {
+                    let _ = events
+                        .send(PeerEvent::DataFailed {
+                            node_id: peer_node,
+                            transfer_ids: ids,
+                            reason: error.to_string(),
+                        })
+                        .await;
+                }
+            }
+        });
+        let _ = node_id;
+    }
+
     async fn handle_message(&mut self, node_id: String, message: WireMessage) {
         let Some(peer) = self.peers.get_mut(&node_id) else {
             return;
@@ -523,6 +906,175 @@ impl Manager {
                     format!("协议错误: {} {}", error.code, error.message),
                 );
             }
+            WireMessage::FileOffer(offer) => {
+                if validate_file_offer(&offer).is_err()
+                    || offer.size > file::MAX_FILE_BYTES
+                    || self.incoming.len() >= file::MAX_PENDING_TOTAL
+                {
+                    let _ = peer.tx.try_send(WireMessage::FileError(FileError {
+                        transfer_id: offer.transfer_id.clone(),
+                        code: "invalid_offer".to_string(),
+                        message: "文件请求不合法或超出限制".to_string(),
+                    }));
+                    return;
+                }
+                let duplicate = self
+                    .incoming
+                    .values()
+                    .any(|item| item.node_id == node_id && item.name == offer.name);
+                if duplicate {
+                    let _ = peer.tx.try_send(WireMessage::FileError(FileError {
+                        transfer_id: offer.transfer_id.clone(),
+                        code: "duplicate".to_string(),
+                        message: "文件请求已经存在".to_string(),
+                    }));
+                    return;
+                }
+                if self
+                    .incoming
+                    .values()
+                    .filter(|item| item.node_id == node_id)
+                    .count()
+                    >= file::MAX_PENDING_PER_PEER
+                {
+                    let _ = peer.tx.try_send(WireMessage::FileError(FileError {
+                        transfer_id: offer.transfer_id.clone(),
+                        code: "too_many".to_string(),
+                        message: "待接收文件太多".to_string(),
+                    }));
+                    return;
+                }
+                self.incoming.insert(
+                    offer.transfer_id.clone(),
+                    IncomingOffer {
+                        node_id: node_id.clone(),
+                        name: offer.name.clone(),
+                        size: offer.size,
+                        created: Instant::now(),
+                        accepted: false,
+                    },
+                );
+                let _ = self
+                    .events
+                    .send(NetEvent::FileOfferReceived {
+                        node_id,
+                        peer_name: peer.name.clone(),
+                        addr: peer.addr,
+                        transfer_id: offer.transfer_id,
+                        file_name: offer.name,
+                        size: offer.size,
+                    })
+                    .await;
+            }
+            WireMessage::FileAccept(accept) => {
+                let mut files = Vec::new();
+                for transfer_id in &accept.transfer_ids {
+                    let Some(offer) = self.outgoing.get_mut(transfer_id) else {
+                        continue;
+                    };
+                    if offer.node_id != node_id || offer.transferring {
+                        continue;
+                    }
+                    offer.transferring = true;
+                    files.push(OutgoingFile {
+                        transfer_id: transfer_id.clone(),
+                        path: offer.path.clone(),
+                    });
+                }
+                if files.is_empty() {
+                    return;
+                }
+                let ids: Vec<String> = files.iter().map(|file| file.transfer_id.clone()).collect();
+                let addr = peer.addr;
+                let local = self.local.node_id.clone();
+                let events = self.peer_tx.clone();
+                let peer_node = node_id.clone();
+                tokio::spawn(async move {
+                    match file::send_files(addr, &local, &files).await {
+                        Ok(()) => {
+                            let _ = events
+                                .send(PeerEvent::DataSent {
+                                    node_id: peer_node.clone(),
+                                    transfer_ids: ids,
+                                })
+                                .await;
+                        }
+                        Err(error) => {
+                            let _ = events
+                                .send(PeerEvent::DataFailed {
+                                    node_id: peer_node.clone(),
+                                    transfer_ids: ids,
+                                    reason: error.to_string(),
+                                })
+                                .await;
+                        }
+                    }
+                });
+                let _ = self
+                    .events
+                    .send(NetEvent::FileAccepted {
+                        node_id,
+                        transfer_ids: accept.transfer_ids,
+                    })
+                    .await;
+            }
+            WireMessage::FileComplete(complete) => {
+                let name = self
+                    .outgoing
+                    .remove(&complete.transfer_id)
+                    .map(|offer| offer.name)
+                    .unwrap_or_else(|| "文件".to_string());
+                let _ = self
+                    .events
+                    .send(NetEvent::FileSent {
+                        node_id,
+                        transfer_id: complete.transfer_id,
+                        file_name: name,
+                    })
+                    .await;
+            }
+            WireMessage::FileCancel(cancel) => {
+                let name = self
+                    .outgoing
+                    .remove(&cancel.transfer_id)
+                    .map(|offer| offer.name)
+                    .or_else(|| {
+                        self.incoming
+                            .remove(&cancel.transfer_id)
+                            .map(|offer| offer.name)
+                    })
+                    .unwrap_or_else(|| "文件".to_string());
+                let _ = self
+                    .events
+                    .send(NetEvent::FileCancelled {
+                        node_id,
+                        transfer_id: cancel.transfer_id,
+                        file_name: name,
+                        reason: cancel.reason,
+                    })
+                    .await;
+            }
+            WireMessage::FileError(error) => {
+                let name = self
+                    .outgoing
+                    .remove(&error.transfer_id)
+                    .map(|offer| offer.name)
+                    .or_else(|| {
+                        self.incoming
+                            .remove(&error.transfer_id)
+                            .map(|offer| offer.name)
+                    })
+                    .unwrap_or_else(|| "文件".to_string());
+                let _ = self
+                    .events
+                    .send(NetEvent::FileFailed {
+                        node_id,
+                        transfer_id: error.transfer_id,
+                        file_name: name,
+                        reason: error.message,
+                    })
+                    .await;
+            }
             _ => {}
         }
     }
@@ -549,6 +1101,8 @@ impl Manager {
             reason: reason.to_string(),
         }));
         let _ = peer.close.send(true);
+        self.outgoing.retain(|_, offer| offer.node_id != node_id);
+        self.incoming.retain(|_, offer| offer.node_id != node_id);
         let _ = self
             .events
             .send(NetEvent::PeerDown {
@@ -651,6 +1205,60 @@ impl Manager {
                 }));
             }
         }
+        let expired_outgoing: Vec<String> = self
+            .outgoing
+            .iter()
+            .filter(|(_, offer)| {
+                !offer.transferring && now.duration_since(offer.created) >= FILE_REQUEST_TIMEOUT
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for transfer_id in expired_outgoing {
+            if let Some(offer) = self.outgoing.remove(&transfer_id) {
+                if let Some(peer) = self.peers.get(&offer.node_id) {
+                    let _ = peer.tx.try_send(WireMessage::FileCancel(FileCancel {
+                        transfer_id: transfer_id.clone(),
+                        reason: "timeout".to_string(),
+                    }));
+                }
+                let _ = self
+                    .events
+                    .send(NetEvent::FileTimedOut {
+                        node_id: offer.node_id,
+                        transfer_id,
+                        file_name: offer.name,
+                        outgoing: true,
+                    })
+                    .await;
+            }
+        }
+        let expired_incoming: Vec<String> = self
+            .incoming
+            .iter()
+            .filter(|(_, offer)| {
+                !offer.accepted && now.duration_since(offer.created) >= FILE_REQUEST_TIMEOUT
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for transfer_id in expired_incoming {
+            if let Some(offer) = self.incoming.remove(&transfer_id) {
+                if let Some(peer) = self.peers.get(&offer.node_id) {
+                    let _ = peer.tx.try_send(WireMessage::FileCancel(FileCancel {
+                        transfer_id: transfer_id.clone(),
+                        reason: "timeout".to_string(),
+                    }));
+                }
+                let _ = self
+                    .events
+                    .send(NetEvent::FileTimedOut {
+                        node_id: offer.node_id,
+                        transfer_id,
+                        file_name: offer.name,
+                        outgoing: false,
+                    })
+                    .await;
+            }
+        }
         if self.manual_disconnect {
             return;
         }
@@ -719,6 +1327,7 @@ impl Manager {
                                     name: hello.name,
                                     addr,
                                     listen_port: hello.listen_port,
+                                    capabilities: hello.capabilities.clone(),
                                     stream,
                                 })
                                 .await;
@@ -757,24 +1366,71 @@ impl Manager {
         let events = self.peer_tx.clone();
         tokio::spawn(async move {
             let _ = stream.set_nodelay(true);
-            match handshake_inbound(stream, &local, listen_port).await {
-                Ok((stream, hello)) => {
-                    let _ = events
-                        .send(PeerEvent::Connected {
-                            node_id: hello.node_id,
-                            name: hello.name,
-                            addr,
-                            listen_port: hello.listen_port,
-                            stream,
-                        })
-                        .await;
-                }
-                Err(error) => {
+            let mut stream = stream;
+            let first = match timeout(HANDSHAKE_TIMEOUT, read_frame(&mut stream)).await {
+                Ok(Ok(message)) => message,
+                Ok(Err(error)) => {
                     let _ = events
                         .send(PeerEvent::HandshakeFailed {
                             addr,
                             node_id: None,
                             reason: error.to_string(),
+                        })
+                        .await;
+                    return;
+                }
+                Err(_) => {
+                    let _ = events
+                        .send(PeerEvent::HandshakeFailed {
+                            addr,
+                            node_id: None,
+                            reason: "handshake timeout".to_string(),
+                        })
+                        .await;
+                    return;
+                }
+            };
+            match first {
+                WireMessage::Hello(hello) => {
+                    match handshake_inbound_with_hello(stream, hello, &local, listen_port).await {
+                        Ok((stream, hello)) => {
+                            let _ = events
+                                .send(PeerEvent::Connected {
+                                    node_id: hello.node_id,
+                                    name: hello.name,
+                                    addr,
+                                    listen_port: hello.listen_port,
+                                    capabilities: hello.capabilities.clone(),
+                                    stream,
+                                })
+                                .await;
+                        }
+                        Err(error) => {
+                            let _ = events
+                                .send(PeerEvent::HandshakeFailed {
+                                    addr,
+                                    node_id: None,
+                                    reason: error.to_string(),
+                                })
+                                .await;
+                        }
+                    }
+                }
+                WireMessage::FileDataHello(hello) => {
+                    let _ = events
+                        .send(PeerEvent::DataHello {
+                            addr,
+                            hello,
+                            stream,
+                        })
+                        .await;
+                }
+                _ => {
+                    let _ = events
+                        .send(PeerEvent::HandshakeFailed {
+                            addr,
+                            node_id: None,
+                            reason: "首帧既不是 Hello 也不是 FileDataHello".to_string(),
                         })
                         .await;
                 }
@@ -815,7 +1471,7 @@ fn local_hello(local: &Identity, listen_port: u16) -> Hello {
         name: local.name.clone(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         listen_port,
-        capabilities: vec!["chat".to_string()],
+        capabilities: vec!["chat".to_string(), "file_transfer".to_string()],
         nonce: uuid::Uuid::new_v4().to_string(),
     }
 }
@@ -849,16 +1505,13 @@ async fn handshake_outbound(
     .map_err(|_| anyhow::anyhow!("handshake timeout"))?
 }
 
-async fn handshake_inbound(
+async fn handshake_inbound_with_hello(
     mut stream: TcpStream,
+    peer: Hello,
     local: &Identity,
     listen_port: u16,
 ) -> Result<(TcpStream, Hello)> {
     timeout(HANDSHAKE_TIMEOUT, async {
-        let received = read_frame(&mut stream).await?;
-        let WireMessage::Hello(peer) = received else {
-            anyhow::bail!("握手首帧不是 Hello");
-        };
         validate_hello(&peer, &local.node_id)?;
         write_frame(
             &mut stream,
@@ -995,6 +1648,257 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn two_managers_transfer_a_file_over_localhost() {
+        let alice = Identity {
+            node_id: "alice-node".into(),
+            name: "alice".into(),
+        };
+        let bob = Identity {
+            node_id: "bob-node".into(),
+            name: "bob".into(),
+        };
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let (alice_handle, mut alice_rx) =
+            start(config(0, Vec::new()), alice, dir_a.path().join("files"))
+                .await
+                .unwrap();
+        let alice_port = alice_handle.local_port();
+        let (bob_handle, mut bob_rx) = start(
+            config(0, vec![format!("127.0.0.1:{alice_port}")]),
+            bob,
+            dir_b.path().join("files"),
+        )
+        .await
+        .unwrap();
+        assert!(wait_peer_up(&mut alice_rx).await);
+        assert!(wait_peer_up(&mut bob_rx).await);
+
+        std::fs::write(dir_b.path().join("files/hello.txt"), b"existing").unwrap();
+        let source = dir_a.path().join("hello.txt");
+        std::fs::write(&source, b"hello file transfer").unwrap();
+        let size = std::fs::metadata(&source).unwrap().len();
+        alice_handle
+            .send(NetCommand::SendFile {
+                node_id: "bob-node".into(),
+                transfer_id: "transfer-1".into(),
+                path: source,
+                name: "hello.txt".into(),
+                size,
+            })
+            .await;
+
+        let mut offer = None;
+        for _ in 0..20 {
+            if let Ok(Some(NetEvent::FileOfferReceived {
+                transfer_id,
+                file_name,
+                size,
+                ..
+            })) = timeout(Duration::from_millis(500), bob_rx.recv()).await
+            {
+                offer = Some((transfer_id, file_name, size));
+                break;
+            }
+        }
+        let (transfer_id, file_name, offered_size) = offer.expect("no file offer");
+        assert_eq!(file_name, "hello.txt");
+        assert_eq!(offered_size, size);
+
+        bob_handle
+            .send(NetCommand::AcceptFiles {
+                node_id: "alice-node".into(),
+                transfer_ids: vec![transfer_id.clone()],
+            })
+            .await;
+
+        let mut received_path = None;
+        let mut sent = false;
+        for _ in 0..40 {
+            match timeout(Duration::from_millis(250), bob_rx.recv()).await {
+                Ok(Some(NetEvent::FileReceived {
+                    transfer_id: id,
+                    path,
+                    ..
+                })) if id == transfer_id => {
+                    received_path = Some(path);
+                }
+                _ => {}
+            }
+            match timeout(Duration::from_millis(50), alice_rx.recv()).await {
+                Ok(Some(NetEvent::FileSent {
+                    transfer_id: id, ..
+                })) if id == transfer_id => {
+                    sent = true;
+                }
+                _ => {}
+            }
+            if received_path.is_some() && sent {
+                break;
+            }
+        }
+        let path = received_path.expect("receiver did not finish");
+        assert!(sent, "sender did not see completion");
+        assert_eq!(path.file_name().unwrap(), "hello[0].txt");
+        assert_eq!(std::fs::read(path).unwrap(), b"hello file transfer");
+
+        let _ = alice_handle.send(NetCommand::Shutdown).await;
+        let _ = bob_handle.send(NetCommand::Shutdown).await;
+    }
+
+    #[tokio::test]
+    async fn duplicate_file_offer_is_rejected_while_pending() {
+        let alice = Identity {
+            node_id: "alice-node".into(),
+            name: "alice".into(),
+        };
+        let bob = Identity {
+            node_id: "bob-node".into(),
+            name: "bob".into(),
+        };
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let (alice_handle, mut alice_rx) =
+            start(config(0, Vec::new()), alice, dir_a.path().join("files"))
+                .await
+                .unwrap();
+        let alice_port = alice_handle.local_port();
+        let (bob_handle, mut bob_rx) = start(
+            config(0, vec![format!("127.0.0.1:{alice_port}")]),
+            bob,
+            dir_b.path().join("files"),
+        )
+        .await
+        .unwrap();
+        assert!(wait_peer_up(&mut alice_rx).await);
+        assert!(wait_peer_up(&mut bob_rx).await);
+
+        let source = dir_a.path().join("a.txt");
+        std::fs::write(&source, b"aaa").unwrap();
+        for id in ["t1", "t2"] {
+            alice_handle
+                .send(NetCommand::SendFile {
+                    node_id: "bob-node".into(),
+                    transfer_id: id.into(),
+                    path: source.clone(),
+                    name: "a.txt".into(),
+                    size: 3,
+                })
+                .await;
+        }
+        let mut duplicate_error = false;
+        for _ in 0..20 {
+            match timeout(Duration::from_millis(500), alice_rx.recv()).await {
+                Ok(Some(NetEvent::FileCommandError { message }))
+                    if message.contains("已经发给") =>
+                {
+                    duplicate_error = true;
+                    break;
+                }
+                Ok(Some(_)) => continue,
+                _ => break,
+            }
+        }
+        assert!(duplicate_error, "duplicate offer was not rejected");
+        let offer = loop {
+            match timeout(Duration::from_millis(500), bob_rx.recv()).await {
+                Ok(Some(NetEvent::FileOfferReceived { transfer_id, .. })) => break transfer_id,
+                Ok(Some(_)) => continue,
+                _ => panic!("no initial offer"),
+            }
+        };
+        assert_eq!(offer, "t1");
+
+        let _ = alice_handle.send(NetCommand::Shutdown).await;
+        let _ = bob_handle.send(NetCommand::Shutdown).await;
+    }
+
+    #[tokio::test]
+    async fn multiple_offers_are_received_in_one_accept() {
+        let alice = Identity {
+            node_id: "alice-node".into(),
+            name: "alice".into(),
+        };
+        let bob = Identity {
+            node_id: "bob-node".into(),
+            name: "bob".into(),
+        };
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let (alice_handle, mut alice_rx) =
+            start(config(0, Vec::new()), alice, dir_a.path().join("files"))
+                .await
+                .unwrap();
+        let alice_port = alice_handle.local_port();
+        let (bob_handle, mut bob_rx) = start(
+            config(0, vec![format!("127.0.0.1:{alice_port}")]),
+            bob,
+            dir_b.path().join("files"),
+        )
+        .await
+        .unwrap();
+        assert!(wait_peer_up(&mut alice_rx).await);
+        assert!(wait_peer_up(&mut bob_rx).await);
+
+        for (id, name, body) in [
+            ("t1", "a.txt", b"aaa".as_slice()),
+            ("t2", "b.txt", b"bbb".as_slice()),
+        ] {
+            let path = dir_a.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            alice_handle
+                .send(NetCommand::SendFile {
+                    node_id: "bob-node".into(),
+                    transfer_id: id.into(),
+                    path,
+                    name: name.into(),
+                    size: body.len() as u64,
+                })
+                .await;
+        }
+
+        let mut ids = Vec::new();
+        while ids.len() < 2 {
+            match timeout(Duration::from_millis(500), bob_rx.recv()).await {
+                Ok(Some(NetEvent::FileOfferReceived { transfer_id, .. })) => {
+                    ids.push(transfer_id);
+                }
+                Ok(Some(_)) => continue,
+                _ => break,
+            }
+        }
+        assert_eq!(ids.len(), 2);
+        bob_handle
+            .send(NetCommand::AcceptFiles {
+                node_id: "alice-node".into(),
+                transfer_ids: ids.clone(),
+            })
+            .await;
+
+        let mut received = 0;
+        let mut sent = 0;
+        while received < 2 || sent < 2 {
+            if let Ok(Some(NetEvent::FileReceived { .. })) =
+                timeout(Duration::from_millis(500), bob_rx.recv()).await
+            {
+                received += 1;
+            }
+            if let Ok(Some(NetEvent::FileSent { .. })) =
+                timeout(Duration::from_millis(50), alice_rx.recv()).await
+            {
+                sent += 1;
+            }
+        }
+        let files = std::fs::read_dir(dir_b.path().join("files"))
+            .unwrap()
+            .count();
+        assert_eq!(files, 2);
+
+        let _ = alice_handle.send(NetCommand::Shutdown).await;
+        let _ = bob_handle.send(NetCommand::Shutdown).await;
+    }
+
+    #[tokio::test]
     async fn two_managers_connect_and_chat_over_localhost() {
         let alice = Identity {
             node_id: "alice-node".into(),
@@ -1004,12 +1908,20 @@ mod tests {
             node_id: "bob-node".into(),
             name: "bob".into(),
         };
-        let (alice_handle, mut alice_rx) = start(config(0, Vec::new()), alice).await.unwrap();
-        let alice_port = alice_handle.local_port();
-        let (bob_handle, mut bob_rx) =
-            start(config(0, vec![format!("127.0.0.1:{alice_port}")]), bob)
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let (alice_handle, mut alice_rx) =
+            start(config(0, Vec::new()), alice, dir_a.path().to_path_buf())
                 .await
                 .unwrap();
+        let alice_port = alice_handle.local_port();
+        let (bob_handle, mut bob_rx) = start(
+            config(0, vec![format!("127.0.0.1:{alice_port}")]),
+            bob,
+            dir_b.path().to_path_buf(),
+        )
+        .await
+        .unwrap();
 
         assert!(wait_peer_up(&mut alice_rx).await, "alice did not see bob");
         assert!(wait_peer_up(&mut bob_rx).await, "bob did not see alice");
