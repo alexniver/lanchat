@@ -1,6 +1,6 @@
 [package]
 name = "lanchat"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 description = "A Helix-inspired, keyboard-first terminal chat client"
 license = "MIT"
@@ -15,6 +15,7 @@ mdns-sd = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"
+toml_edit = "0.25"
 anyhow = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }

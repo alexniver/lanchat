@@ -29,6 +29,7 @@ pub enum WireMessage {
     FileCancel(FileCancel),
     FileError(FileError),
     ShortNoUpdate(ShortNoUpdate),
+    NameUpdate(NameUpdate),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -46,6 +47,12 @@ pub struct Hello {
     #[serde(default)]
     pub capabilities: Vec<String>,
     pub nonce: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NameUpdate {
+    pub node_id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -336,6 +343,10 @@ mod tests {
             WireMessage::ShortNoUpdate(ShortNoUpdate {
                 node_id: "node-a".into(),
                 short_no: 2,
+            }),
+            WireMessage::NameUpdate(NameUpdate {
+                node_id: "node-a".into(),
+                name: "alice".into(),
             }),
         ] {
             let encoded = encode_frame(&message).unwrap();

@@ -170,6 +170,11 @@ async fn main() -> Result<()> {
                             .await;
                     }
                 }
+                Effect::SetName { name } => {
+                    if let Some(handle) = &net_handle {
+                        let _ = handle.send(NetCommand::SetName { name }).await;
+                    }
+                }
                 Effect::Reconnect => {
                     if let Some(handle) = &net_handle {
                         let _ = handle.send(NetCommand::Reconnect).await;

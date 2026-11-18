@@ -54,6 +54,9 @@ pub enum NetCommand {
         node_id: String,
         transfer_ids: Vec<String>,
     },
+    SetName {
+        name: String,
+    },
     Reconnect,
     Disconnect,
     Shutdown,
@@ -131,6 +134,10 @@ pub enum NetEvent {
     PeerShortNoChanged {
         node_id: String,
         short_no: u32,
+    },
+    PeerNameChanged {
+        node_id: String,
+        name: String,
     },
     Status {
         state: ConnectionState,
@@ -210,6 +217,7 @@ struct PeerEntry {
     close: watch::Sender<bool>,
     supports_files: bool,
     supports_short_no: bool,
+    supports_name_update: bool,
     short_no: u32,
     last_seen: Instant,
     last_ping: Instant,
@@ -425,6 +433,19 @@ impl Manager {
                 transfer_ids,
             } => {
                 self.accept_files(node_id, transfer_ids).await;
+                false
+            }
+            NetCommand::SetName { name } => {
+                self.local.name = name.clone();
+                let update = WireMessage::NameUpdate(crate::net::protocol::NameUpdate {
+                    node_id: self.local.node_id.clone(),
+                    name,
+                });
+                for peer in self.peers.values() {
+                    if peer.supports_name_update {
+                        let _ = peer.tx.try_send(update.clone());
+                    }
+                }
                 false
             }
             NetCommand::Reconnect => {
@@ -734,6 +755,7 @@ impl Manager {
                         close: close_tx,
                         supports_files: capabilities.iter().any(|item| item == "file_transfer"),
                         supports_short_no,
+                        supports_name_update: capabilities.iter().any(|item| item == "name_update"),
                         short_no: peer_short_no,
                         last_seen: Instant::now(),
                         last_ping: Instant::now(),
@@ -1110,6 +1132,20 @@ impl Manager {
                         reason: cancel.reason,
                     })
                     .await;
+            }
+            WireMessage::NameUpdate(update) => {
+                if update.node_id == node_id && !update.name.trim().is_empty() {
+                    if let Some(peer) = self.peers.get_mut(&node_id) {
+                        peer.name = update.name.clone();
+                        let _ = self
+                            .events
+                            .send(NetEvent::PeerNameChanged {
+                                node_id: node_id.clone(),
+                                name: update.name,
+                            })
+                            .await;
+                    }
+                }
             }
             WireMessage::ShortNoUpdate(update) => {
                 if update.node_id == node_id && update.short_no != 0 {
@@ -1549,6 +1585,7 @@ fn local_hello(local: &Identity, listen_port: u16) -> Hello {
             "chat".to_string(),
             "file_transfer".to_string(),
             "short_no".to_string(),
+            "name_update".to_string(),
         ],
         nonce: uuid::Uuid::new_v4().to_string(),
     }
@@ -1723,6 +1760,61 @@ mod tests {
             }
         }
         None
+    }
+
+    #[tokio::test]
+    async fn name_update_reaches_peer() {
+        let alice = Identity {
+            node_id: "alice-node".into(),
+            name: "alice".into(),
+            short_no: 1,
+        };
+        let bob = Identity {
+            node_id: "bob-node".into(),
+            name: "bob".into(),
+            short_no: 2,
+        };
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let (alice_handle, mut alice_rx) = start(
+            config(0, Vec::new()),
+            alice,
+            dir_a.path().join("identity.json"),
+            dir_a.path().join("files"),
+        )
+        .await
+        .unwrap();
+        let alice_port = alice_handle.local_port();
+        let (bob_handle, mut bob_rx) = start(
+            config(0, vec![format!("127.0.0.1:{alice_port}")]),
+            bob,
+            dir_b.path().join("identity.json"),
+            dir_b.path().join("files"),
+        )
+        .await
+        .unwrap();
+        assert!(wait_peer_up(&mut alice_rx).await);
+        assert!(wait_peer_up(&mut bob_rx).await);
+
+        alice_handle
+            .send(NetCommand::SetName {
+                name: "alice2".into(),
+            })
+            .await;
+        let mut updated = false;
+        for _ in 0..20 {
+            if let Ok(Some(NetEvent::PeerNameChanged { name, .. })) =
+                timeout(Duration::from_millis(500), bob_rx.recv()).await
+            {
+                if name == "alice2" {
+                    updated = true;
+                    break;
+                }
+            }
+        }
+        assert!(updated, "bob did not see alice2");
+        let _ = alice_handle.send(NetCommand::Shutdown).await;
+        let _ = bob_handle.send(NetCommand::Shutdown).await;
     }
 
     #[tokio::test]

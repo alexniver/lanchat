@@ -689,6 +689,13 @@ impl App {
                 }
                 self.dirty = true;
             }
+            NetEvent::PeerNameChanged { node_id, name } => {
+                if let Some(peer) = self.peers.get_mut(&node_id) {
+                    peer.name = name;
+                    peer.display_name = naming::display_name(&peer.name, &node_id, peer.short_no);
+                }
+                self.dirty = true;
+            }
             NetEvent::Status { state, detail } => {
                 self.connection = state;
                 if !detail.is_empty() {
@@ -804,6 +811,10 @@ impl App {
                     self.handle_recv_file(&peer);
                     return;
                 }
+                command::ParsedCommand::SetName { name } => {
+                    self.handle_set_name(&name);
+                    return;
+                }
             }
         }
         let saved_selected = compose.saved_selected;
@@ -908,6 +919,42 @@ impl App {
             format!("正在向 {peer_name} 发送 {name} 的接收请求…"),
             StatusKind::Info,
         );
+        self.dirty = true;
+    }
+
+    fn handle_set_name(&mut self, raw: &str) {
+        let name = raw.trim();
+        if name.is_empty() {
+            self.set_status(command::SETNAME_USAGE, StatusKind::Error);
+            return;
+        }
+        if name.chars().count() > 64 || name.len() > 256 {
+            self.set_status("名字太长（最多 64 个字符）", StatusKind::Error);
+            return;
+        }
+        if name.chars().any(|ch| ch.is_control()) {
+            self.set_status("名字不能包含控制字符", StatusKind::Error);
+            return;
+        }
+        if let Err(error) = crate::config::set_identity_name(&self.config.paths.config_file, name) {
+            self.set_status(format!("保存配置失败: {error}"), StatusKind::Error);
+            return;
+        }
+        self.config.identity.name = name.to_string();
+        if let Err(error) =
+            crate::config::save_identity(&self.config.paths.identity_file, &self.config.identity)
+        {
+            self.set_status(format!("保存身份失败: {error}"), StatusKind::Error);
+            return;
+        }
+        self.layers.pop();
+        if self.config.network.enabled {
+            self.effects.push(Effect::SetName {
+                name: name.to_string(),
+            });
+        }
+        let display = self.self_display_name();
+        self.set_status(format!("名称已修改为 {display}"), StatusKind::Success);
         self.dirty = true;
     }
 
@@ -1716,5 +1763,37 @@ mod tests {
             effect,
             Effect::SendFile { node_id, .. } if node_id == id
         )));
+    }
+    #[test]
+    fn setname_updates_display_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.paths.config_dir = dir.path().to_path_buf();
+        config.paths.config_file = dir.path().join("config.toml");
+        config.paths.identity_file = dir.path().join("identity.json");
+        std::fs::write(&config.paths.config_file, "[identity]\nname = \"old\"\n").unwrap();
+        let mut app = App::new(
+            config,
+            Keymap::defaults(),
+            HistoryHandle::disabled(),
+            Vec::new(),
+            Vec::new(),
+        );
+        app.handle_key(Key::Char('/'));
+        type_text(&mut app, "setname alice");
+        app.handle_key(Key::Enter);
+        assert_eq!(app.config.identity.name, "alice");
+        assert_eq!(app.self_display_name(), "alice (no1)");
+        assert!(crate::ui::status::status_text(&app).starts_with("本机 alice (no1)"));
+        assert!(app
+            .status
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("名称已修改为 alice (no1)"));
+        let config_text = std::fs::read_to_string(&app.config.paths.config_file).unwrap();
+        assert!(config_text.contains("name = \"alice\""));
+        let identity_text = std::fs::read_to_string(&app.config.paths.identity_file).unwrap();
+        assert!(identity_text.contains("\"name\": \"alice\""));
     }
 }

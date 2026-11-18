@@ -10,6 +10,9 @@ pub enum ParsedCommand {
     RecvFile {
         peer: String,
     },
+    SetName {
+        name: String,
+    },
     /// Not a registered command: send the original text as a normal message.
     Unknown,
     /// A registered command with bad arguments: show usage, do not send.
@@ -20,6 +23,7 @@ pub enum ParsedCommand {
 
 pub const SEND_USAGE: &str = "用法：/send file <文件路径> to <对方>";
 pub const RECV_USAGE: &str = "用法：/recv file <对方>";
+pub const SETNAME_USAGE: &str = "用法：/setname <新名字>";
 
 pub fn parse(input: &str) -> ParsedCommand {
     let text = input.trim();
@@ -31,6 +35,9 @@ pub fn parse(input: &str) -> ParsedCommand {
     }
     if text == "/recv" || text.starts_with("/recv ") {
         return parse_recv_file(text);
+    }
+    if text == "/setname" || text.starts_with("/setname ") {
+        return parse_setname(text);
     }
     ParsedCommand::Unknown
 }
@@ -64,6 +71,23 @@ fn parse_recv_file(text: &str) -> ParsedCommand {
     }
     ParsedCommand::RecvFile {
         peer: peer.to_string(),
+    }
+}
+
+fn parse_setname(text: &str) -> ParsedCommand {
+    let Some(rest) = text.strip_prefix("/setname ") else {
+        return ParsedCommand::Invalid {
+            usage: SETNAME_USAGE,
+        };
+    };
+    let name = strip_quotes(rest.trim());
+    if name.is_empty() {
+        return ParsedCommand::Invalid {
+            usage: SETNAME_USAGE,
+        };
+    }
+    ParsedCommand::SetName {
+        name: name.to_string(),
     }
 }
 
@@ -142,6 +166,28 @@ mod tests {
             parse("/recv file 101"),
             ParsedCommand::RecvFile { peer: "101".into() }
         );
+    }
+
+    #[test]
+    fn parses_setname() {
+        assert_eq!(
+            parse("/setname alice"),
+            ParsedCommand::SetName {
+                name: "alice".into()
+            }
+        );
+        assert_eq!(
+            parse("/setname 张三"),
+            ParsedCommand::SetName {
+                name: "张三".into()
+            }
+        );
+        assert!(matches!(
+            parse("/setname"),
+            ParsedCommand::Invalid {
+                usage: SETNAME_USAGE
+            }
+        ));
     }
 
     #[test]

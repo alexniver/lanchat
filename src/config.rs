@@ -330,6 +330,30 @@ fn load_or_create_identity(
     ))
 }
 
+/// Persist the display name into an existing config.toml without dropping
+/// comments/other sections. If the config file does not exist, only
+/// identity.json needs updating.
+pub fn set_identity_name(config_path: &Path, name: &str) -> Result<()> {
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let text = fs::read_to_string(config_path)
+        .with_context(|| format!("读取配置失败: {}", config_path.display()))?;
+    let mut document = text
+        .parse::<toml_edit::DocumentMut>()
+        .with_context(|| format!("解析配置失败: {}", config_path.display()))?;
+    let identity = document
+        .entry("identity")
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    let table = identity
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("config.toml 的 [identity] 不是表"))?;
+    table["name"] = toml_edit::value(name);
+    fs::write(config_path, document.to_string())
+        .with_context(|| format!("写入配置失败: {}", config_path.display()))?;
+    Ok(())
+}
+
 pub fn save_identity(path: &Path, identity: &Identity) -> Result<()> {
     save_identity_file(
         path,
@@ -428,5 +452,26 @@ mod tests {
         let file: ConfigFile = toml::from_str("").unwrap();
         assert!(file.identity.name.is_none());
         assert!(file.history.enabled.is_none());
+    }
+    #[test]
+    fn set_identity_name_preserves_other_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "# keep this comment\n[identity]\nname = \"old\"\n[network]\nport = 47731\n",
+        )
+        .unwrap();
+        set_identity_name(&path, "alice (no1)").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# keep this comment"));
+        assert!(text.contains("name = \"alice (no1)\""));
+        assert!(text.contains("port = 47731"));
+    }
+
+    #[test]
+    fn set_identity_name_ignores_missing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(set_identity_name(&dir.path().join("missing.toml"), "alice").is_ok());
     }
 }

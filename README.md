@@ -1,8 +1,8 @@
-# LanChat 0.1.6
+# LanChat 0.1.7
 
 LanChat 是一个 **Helix 风格键位、键盘优先的局域网终端聊天工具**。它运行在终端里，不需要中心服务器，同一局域网内的节点通过 mDNS 自动发现，再用 TCP 直连聊天。
 
-0.1.6 增加短号 `no1`/`no2`，文件传递可用 `no1` 或 `ip101` 寻址；0.1.4 已适配 Windows/macOS 路径，0.1.3 已加入帮助，0.1.2 已加入文件传递：
+0.1.7 增加 `/setname` 改名，并在状态栏显示本机名；0.1.6 已加入短号 `no1`/`no2` 和 `no1`/`ip101` 文件寻址：
 
 - 两个 panel：消息列表 + 状态栏。
 - `i` 输入、Enter 发送、Esc 取消。
@@ -15,10 +15,11 @@ LanChat 是一个 **Helix 风格键位、键盘优先的局域网终端聊天工
 - 重名自动保存为 `a[0].png`、`a[1].png`；10 分钟未接收自动取消。
 - 在消息列表按 `?` 打开内置帮助，`j/k` 滚动，`Esc` 返回。
 - 配置/历史/接收文件使用平台目录；Windows/macOS 路径已适配。
-- 用户名显示 `昵称 (no1)`；`/send file ... to no1`、`/send file ... to ip101` 可用。
+- 用户名显示 `昵称 (no1)`；`/setname alice` 可改名；状态栏显示 `本机 昵称 (no1)`。
+- `/send file ... to no1`、`/send file ... to ip101` 可用。
 - 本地 JSONL 历史；重启后还能看到之前消息。
 
-> **安全提醒**：0.1.6 是明文局域网聊天/文件传递，没有加密、没有身份认证。请只在可信局域网使用，不要传输敏感信息。
+> **安全提醒**：0.1.7 是明文局域网聊天/文件传递，没有加密、没有身份认证。请只在可信局域网使用，不要传输敏感信息。
 
 ## 界面
 
@@ -156,6 +157,23 @@ lanchat --no-network
 
 发送空消息不会产生消息；单条消息上限 16 KiB。
 
+### 修改名称
+
+```text
+/setname alice
+```
+
+- 成功后显示名变为 `alice (no1)`。
+- 更新 `identity.json` 和 `config.toml` 的 `[identity].name`（如果存在）。
+- 状态栏变成：
+
+```text
+本机 alice (no1) · 在线 2 · 消息 3 · 选中 3/3 · 自动 · ● online
+```
+
+- 在线 0.1.7 peer 会收到 `NameUpdate`；旧版本 peer 重连后看到新名字。
+- 历史消息不重写。
+
 ### 文件传递（0.1.2）
 
 发送方：
@@ -204,7 +222,7 @@ lanchat --no-network
 帮助状态栏示例：
 
 ```text
-按 Esc 退出帮助 · j/k 滚动 · 帮助 1/24 · LanChat 0.1.6
+按 Esc 退出帮助 · j/k 滚动 · 帮助 1/24 · LanChat 0.1.7 · 本机 alice (no1)
 ```
 
 ### 选中消息
@@ -297,6 +315,7 @@ Linux 遵循 XDG；macOS/Windows 使用 `dirs` 库的系统目录。`--config` �
 
 - `node_id` 用于网络去重/识别，建议不要删除。
 - `short_no` 是显示短号，`1` 显示为 `no1`；首次运行分配 1，冲突时自动顺延。
+- `/setname` 会同时更新这里的 `name` 和 `config.toml` 的 `[identity].name`。
 - 昵称可以通过配置修改。
 
 ### `config.toml`
@@ -414,7 +433,7 @@ lanchat --connect 192.168.1.10:47731
 
 ### 安全边界
 
-0.1.6 **不提供**：
+0.1.7 **不提供**：
 
 - 加密、身份认证、前向保密；
 - 文件夹同步/自动共享；
@@ -490,7 +509,7 @@ cargo test
 cargo build --release
 ```
 
-旧版实现保留在 [`old/`](old/)，不参与编译。0.1.0 的历史需求在 [docs/requ/0.1.0/README.md](docs/requ/0.1.0/README.md)，0.1.1 联网设计与决策在 [docs/0.1.1/README.md](docs/0.1.1/README.md)，0.1.2 文件传递需求在 [docs/0.1.2/README.md](docs/0.1.2/README.md)，0.1.3 帮助页面需求在 [docs/0.1.3/README.md](docs/0.1.3/README.md)，0.1.4 跨平台路径适配在 [docs/0.1.4/README.md](docs/0.1.4/README.md)，0.1.5 node_id 用户名在 [docs/0.1.5/README.md](docs/0.1.5/README.md)，0.1.6 短号在 [docs/0.1.6/README.md](docs/0.1.6/README.md)。
+旧版实现保留在 [`old/`](old/)，不参与编译。0.1.0 的历史需求在 [docs/requ/0.1.0/README.md](docs/requ/0.1.0/README.md)，0.1.1 联网设计与决策在 [docs/0.1.1/README.md](docs/0.1.1/README.md)，0.1.2 文件传递需求在 [docs/0.1.2/README.md](docs/0.1.2/README.md)，0.1.3 帮助页面需求在 [docs/0.1.3/README.md](docs/0.1.3/README.md)，0.1.4 跨平台路径适配在 [docs/0.1.4/README.md](docs/0.1.4/README.md)，0.1.5 node_id 用户名在 [docs/0.1.5/README.md](docs/0.1.5/README.md)，0.1.6 短号在 [docs/0.1.6/README.md](docs/0.1.6/README.md)，0.1.7 改名/状态栏在 [docs/0.1.7/README.md](docs/0.1.7/README.md)。
 
 ## 许可证
 

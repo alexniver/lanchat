@@ -37,28 +37,28 @@ pub fn status_text(app: &App) -> String {
         "手动"
     };
 
-    let mut parts = if app.top_is_compose() {
-        vec![
+    let mut parts = vec![format!("本机 {}", app.self_display_name())];
+    if app.top_is_compose() {
+        parts.extend([
             "输入中".to_string(),
             "Enter 发送".to_string(),
             "Esc 取消".to_string(),
             format!("消息 {message_count}"),
-        ]
+        ]);
     } else {
-        let mut parts = vec![
+        parts.extend([
             format!("在线 {}", app.online_count()),
             format!("消息 {message_count}"),
             format!("选中 {position}"),
             mode.to_string(),
-        ];
+        ]);
         if app.network_enabled() {
             parts.push(connection_text(app.connection, true).to_string());
         }
         if app.unread > 0 && !app.list().map(|list| list.follow_latest).unwrap_or(true) {
             parts.push(format!("新消息 {}", app.unread));
         }
-        parts
-    };
+    }
 
     if let Some(status) = &app.status {
         if !status.is_expired(Instant::now()) {
@@ -78,8 +78,9 @@ pub fn help_status(app: &App) -> String {
         format!("{}/{}", help.offset + 1, help.lines.len())
     };
     format!(
-        "按 Esc 退出帮助 · j/k 滚动 · 帮助 {position} · LanChat {}",
-        env!("CARGO_PKG_VERSION")
+        "按 Esc 退出帮助 · j/k 滚动 · 帮助 {position} · LanChat {} · 本机 {}",
+        env!("CARGO_PKG_VERSION"),
+        app.self_display_name()
     )
 }
 
@@ -162,6 +163,7 @@ mod tests {
         let app = app_with(vec![Message::new("alice", "one")]);
         let text = status_text(&app);
         assert!(text.contains("在线 1"));
+        assert!(text.contains("本机 alice (no1)"));
         assert!(text.contains("选中 1/1"));
         assert!(text.contains("自动"));
     }

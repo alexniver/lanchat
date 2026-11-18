@@ -23,6 +23,9 @@ pub enum Effect {
         node_id: String,
         transfer_ids: Vec<String>,
     },
+    SetName {
+        name: String,
+    },
     Reconnect,
     Disconnect,
 }
