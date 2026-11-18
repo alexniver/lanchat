@@ -564,7 +564,7 @@ impl App {
                     .and_then(|peer| (peer.short_no > 0).then(|| format!("no{}", peer.short_no)))
                     .unwrap_or_else(|| naming::short_node_id(&node_id));
                 self.push_system(format!(
-                    "{display} 想发送文件 {file_name}（{}）。输入 /recv file {short} 接收。",
+                    "{display} 想发送文件 {file_name}（{}）。输入 /recvfile {short} 接收。",
                     format_size(size)
                 ));
             }
@@ -1528,11 +1528,11 @@ mod tests {
     fn malformed_send_shows_usage_and_keeps_input() {
         let mut app = app_with(vec![]);
         app.handle_key(Key::Char('/'));
-        type_text(&mut app, "send file");
+        type_text(&mut app, "sendfile");
         app.handle_key(Key::Enter);
         assert!(app.top_is_compose());
         assert!(app.messages.is_empty());
-        assert!(app.status.as_ref().unwrap().text.contains("/send file"));
+        assert!(app.status.as_ref().unwrap().text.contains("/sendfile"));
     }
 
     #[test]
@@ -1549,7 +1549,7 @@ mod tests {
         assert_eq!(app.pending_file_offers.len(), 1);
         assert_eq!(app.messages.len(), 1);
         assert_eq!(app.messages[0].kind, MessageKind::System);
-        assert!(app.messages[0].body.contains("/recv file peer-1"));
+        assert!(app.messages[0].body.contains("/recvfile peer-1"));
         assert!(app.messages[0].body.contains("a.png"));
     }
 
@@ -1580,7 +1580,7 @@ mod tests {
             size: 1300,
         });
         app.handle_key(Key::Char('/'));
-        type_text(&mut app, "recv file no1");
+        type_text(&mut app, "recvfile no1");
         app.handle_key(Key::Enter);
         let effects = app.take_effects();
         assert!(effects.iter().any(|effect| matches!(
@@ -1606,7 +1606,7 @@ mod tests {
         app.handle_key(Key::Char('/'));
         type_text(
             &mut app,
-            &format!("send file {} to 127.0.0.1", path.display()),
+            &format!("sendfile {} to 127.0.0.1", path.display()),
         );
         app.handle_key(Key::Enter);
         let effects = app.take_effects();
@@ -1756,7 +1756,7 @@ mod tests {
             addr: "192.168.1.103:47731".parse().unwrap(),
         });
         app.handle_key(Key::Char('/'));
-        type_text(&mut app, &format!("send file {} to no1", path.display()));
+        type_text(&mut app, &format!("sendfile {} to no1", path.display()));
         app.handle_key(Key::Enter);
         let effects = app.take_effects();
         assert!(effects.iter().any(|effect| matches!(

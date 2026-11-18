@@ -115,7 +115,7 @@ mod tests {
         assert!(text.contains("帮助"));
         assert!(text.contains("快速开始"));
         assert!(text.contains("按Esc退出帮助"));
-        assert!(text.contains("LanChat0.1.7"));
+        assert!(text.contains("LanChat0.1.8"));
         assert!(text.contains("本机"));
         assert!(!text.contains("信息列表"));
         assert!(!text.contains("在线1"));

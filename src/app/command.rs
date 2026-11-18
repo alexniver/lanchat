@@ -21,8 +21,8 @@ pub enum ParsedCommand {
     },
 }
 
-pub const SEND_USAGE: &str = "用法：/send file <文件路径> to <对方>";
-pub const RECV_USAGE: &str = "用法：/recv file <对方>";
+pub const SEND_USAGE: &str = "用法：/sendfile <文件路径> to <对方>";
+pub const RECV_USAGE: &str = "用法：/recvfile <对方>";
 pub const SETNAME_USAGE: &str = "用法：/setname <新名字>";
 
 pub fn parse(input: &str) -> ParsedCommand {
@@ -30,20 +30,31 @@ pub fn parse(input: &str) -> ParsedCommand {
     if !text.starts_with('/') {
         return ParsedCommand::Unknown;
     }
+    if text == "/sendfile" || text.starts_with("/sendfile ") {
+        return parse_send_file(text, "/sendfile ");
+    }
+    if text == "/recvfile" || text.starts_with("/recvfile ") {
+        return parse_recv_file(text, "/recvfile ");
+    }
+    // 0.1.7 compatibility aliases; not shown in help.
     if text == "/send" || text.starts_with("/send ") {
-        return parse_send_file(text);
+        return parse_send_file(text, "/send file ");
     }
     if text == "/recv" || text.starts_with("/recv ") {
-        return parse_recv_file(text);
+        return parse_recv_file(text, "/recv file ");
     }
     if text == "/setname" || text.starts_with("/setname ") {
-        return parse_setname(text);
+        return parse_setname(text, "/setname ");
+    }
+    // 0.1.7 compatibility alias; not shown in help.
+    if text == "/set name" || text.starts_with("/set name ") {
+        return parse_setname(text, "/set name ");
     }
     ParsedCommand::Unknown
 }
 
-fn parse_send_file(text: &str) -> ParsedCommand {
-    let Some(rest) = text.strip_prefix("/send file ") else {
+fn parse_send_file(text: &str, prefix: &str) -> ParsedCommand {
+    let Some(rest) = text.strip_prefix(prefix) else {
         return ParsedCommand::Invalid { usage: SEND_USAGE };
     };
     let rest = rest.trim();
@@ -61,8 +72,8 @@ fn parse_send_file(text: &str) -> ParsedCommand {
     }
 }
 
-fn parse_recv_file(text: &str) -> ParsedCommand {
-    let Some(rest) = text.strip_prefix("/recv file ") else {
+fn parse_recv_file(text: &str, prefix: &str) -> ParsedCommand {
+    let Some(rest) = text.strip_prefix(prefix) else {
         return ParsedCommand::Invalid { usage: RECV_USAGE };
     };
     let peer = strip_quotes(rest.trim());
@@ -74,8 +85,8 @@ fn parse_recv_file(text: &str) -> ParsedCommand {
     }
 }
 
-fn parse_setname(text: &str) -> ParsedCommand {
-    let Some(rest) = text.strip_prefix("/setname ") else {
+fn parse_setname(text: &str, prefix: &str) -> ParsedCommand {
+    let Some(rest) = text.strip_prefix(prefix) else {
         return ParsedCommand::Invalid {
             usage: SETNAME_USAGE,
         };
@@ -138,21 +149,21 @@ mod tests {
     #[test]
     fn parses_send_file() {
         assert_eq!(
-            parse("/send file ~/Download/a.png to 103"),
+            parse("/sendfile ~/Download/a.png to 103"),
             ParsedCommand::SendFile {
                 path: "~/Download/a.png".into(),
                 peer: "103".into()
             }
         );
         assert_eq!(
-            parse("/send file \"./my photo.png\" to 192.168.1.103"),
+            parse("/sendfile \"./my photo.png\" to 192.168.1.103"),
             ParsedCommand::SendFile {
                 path: "./my photo.png".into(),
                 peer: "192.168.1.103".into()
             }
         );
         assert_eq!(
-            parse("/send file a to b to 101"),
+            parse("/sendfile a to b to 101"),
             ParsedCommand::SendFile {
                 path: "a to b".into(),
                 peer: "101".into()
@@ -163,9 +174,25 @@ mod tests {
     #[test]
     fn parses_recv_file() {
         assert_eq!(
-            parse("/recv file 101"),
+            parse("/recvfile 101"),
             ParsedCommand::RecvFile { peer: "101".into() }
         );
+    }
+
+    #[test]
+    fn parses_legacy_set_name_alias() {
+        assert_eq!(
+            parse("/set name alice"),
+            ParsedCommand::SetName {
+                name: "alice".into()
+            }
+        );
+        assert!(matches!(
+            parse("/set name"),
+            ParsedCommand::Invalid {
+                usage: SETNAME_USAGE
+            }
+        ));
     }
 
     #[test]
@@ -191,28 +218,43 @@ mod tests {
     }
 
     #[test]
+    fn legacy_commands_remain_aliases() {
+        assert_eq!(
+            parse("/send file ~/a.png to no1"),
+            ParsedCommand::SendFile {
+                path: "~/a.png".into(),
+                peer: "no1".into()
+            }
+        );
+        assert_eq!(
+            parse("/recv file no1"),
+            ParsedCommand::RecvFile { peer: "no1".into() }
+        );
+    }
+
+    #[test]
     fn unknown_commands_fall_back_to_chat() {
         assert_eq!(parse("/hello"), ParsedCommand::Unknown);
         assert_eq!(parse("/"), ParsedCommand::Unknown);
-        assert_eq!(parse("/sendfile x"), ParsedCommand::Unknown);
+        assert_eq!(parse("/sendfilex x"), ParsedCommand::Unknown);
     }
 
     #[test]
     fn malformed_registered_commands_are_invalid() {
         assert!(matches!(
-            parse("/send file"),
+            parse("/sendfile"),
             ParsedCommand::Invalid { usage: SEND_USAGE }
         ));
         assert!(matches!(
-            parse("/send file a.png"),
+            parse("/sendfile a.png"),
             ParsedCommand::Invalid { usage: SEND_USAGE }
         ));
         assert!(matches!(
-            parse("/recv file"),
+            parse("/recvfile"),
             ParsedCommand::Invalid { usage: RECV_USAGE }
         ));
         assert!(matches!(
-            parse("/recv file 101 102"),
+            parse("/recvfile 101 102"),
             ParsedCommand::Invalid { usage: RECV_USAGE }
         ));
     }

@@ -1,8 +1,8 @@
-# LanChat 0.1.7
+# LanChat 0.1.8
 
 LanChat 是一个 **Helix 风格键位、键盘优先的局域网终端聊天工具**。它运行在终端里，不需要中心服务器，同一局域网内的节点通过 mDNS 自动发现，再用 TCP 直连聊天。
 
-0.1.7 增加 `/setname` 改名，并在状态栏显示本机名；0.1.6 已加入短号 `no1`/`no2` 和 `no1`/`ip101` 文件寻址：
+0.1.8 把文件命令改为 `/sendfile`、`/recvfile`；0.1.7 已加入 `/setname` 改名和状态栏本机名：
 
 - 两个 panel：消息列表 + 状态栏。
 - `i` 输入、Enter 发送、Esc 取消。
@@ -11,15 +11,15 @@ LanChat 是一个 **Helix 风格键位、键盘优先的局域网终端聊天工
 - mDNS 自动发现；mDNS 不可用时可以手动填地址。
 - 右侧成员侧边栏、在线人数、心跳和断线重连。
 - 中文/emoji 按终端显示宽度处理。
-- `/send file ... to ...` 发文件，对方 `/recv file ...` 接收；文件保存到平台数据目录下的 `lanchat/files`。
+- `/sendfile ... to ...` 发文件，对方 `/recvfile ...` 接收；文件保存到平台数据目录下的 `lanchat/files`。
 - 重名自动保存为 `a[0].png`、`a[1].png`；10 分钟未接收自动取消。
 - 在消息列表按 `?` 打开内置帮助，`j/k` 滚动，`Esc` 返回。
 - 配置/历史/接收文件使用平台目录；Windows/macOS 路径已适配。
 - 用户名显示 `昵称 (no1)`；`/setname alice` 可改名；状态栏显示 `本机 昵称 (no1)`。
-- `/send file ... to no1`、`/send file ... to ip101` 可用。
+- `/sendfile ... to no1`、`/sendfile ... to ip101` 可用。
 - 本地 JSONL 历史；重启后还能看到之前消息。
 
-> **安全提醒**：0.1.7 是明文局域网聊天/文件传递，没有加密、没有身份认证。请只在可信局域网使用，不要传输敏感信息。
+> **安全提醒**：0.1.8 是明文局域网聊天/文件传递，没有加密、没有身份认证。请只在可信局域网使用，不要传输敏感信息。
 
 ## 界面
 
@@ -38,7 +38,7 @@ LanChat 是一个 **Helix 风格键位、键盘优先的局域网终端聊天工
 - 上 panel：消息列表。
 - 下 panel：在线人数、消息数、选中位置、自动/手动模式、连接状态。
 - 按 `i` 后，消息列表下方会出现输入 panel；发送/取消后消失。
-- 按 `/` 打开输入 panel，预填 `/`，用于 `/send file`、`/recv file` 等命令。
+- 按 `/` 打开输入 panel，预填 `/`，用于 `/sendfile`、`/recvfile` 等命令。
 - 按 `?` 打开内置帮助，`j/k` 滚动，`Esc` 返回。
 - 按 `Space u` 后，右侧出现成员侧边栏。
 
@@ -179,7 +179,7 @@ lanchat --no-network
 发送方：
 
 ```text
-/send file ~/Download/a.png to no1
+/sendfile ~/Download/a.png to no1
 ```
 
 - `/` 打开输入框并预填 `/`。
@@ -188,17 +188,17 @@ lanchat --no-network
 - 接收方会看到：
 
 ```text
-[系统][10:30:05]: alice (no1) 想发送文件 a.png（1.2 MB）。输入 /recv file no1 接收。
+[系统][10:30:05]: alice (no1) 想发送文件 a.png（1.2 MB）。输入 /recvfile no1 接收。
 ```
 
 接收方输入：
 
 ```text
-/recv file no1
+/recvfile no1
 ```
 
 - 接收该发送方全部待接收文件。
-- 文件提示中的 `/recv file` 使用短号 `no1`。
+- 文件提示中的 `/recvfile` 使用短号 `no1`。
 - 文件保存到平台数据目录下的 `lanchat/files`（Linux 为 `~/.local/share/lanchat/files`）；重名自动改为 `a[0].png`、`a[1].png`。
 - 请求 10 分钟未接收自动取消；同一文件重复请求会被拦截。
 - 文件传输走独立数据 TCP 连接，控制消息走聊天连接，避免大文件阻塞聊天。
@@ -222,7 +222,7 @@ lanchat --no-network
 帮助状态栏示例：
 
 ```text
-按 Esc 退出帮助 · j/k 滚动 · 帮助 1/24 · LanChat 0.1.7 · 本机 alice (no1)
+按 Esc 退出帮助 · j/k 滚动 · 帮助 1/24 · LanChat 0.1.8 · 本机 alice (no1)
 ```
 
 ### 选中消息
@@ -433,7 +433,7 @@ lanchat --connect 192.168.1.10:47731
 
 ### 安全边界
 
-0.1.7 **不提供**：
+0.1.8 **不提供**：
 
 - 加密、身份认证、前向保密；
 - 文件夹同步/自动共享；
@@ -462,7 +462,7 @@ TUI **不加载字体**。终端字体由终端模拟器提供，程序只输出
 - 没有断点续传；传输中断后需要重发。
 - 没有加密/鉴权；没有历史同步；没有离线队列/ACK。
 - 单行输入；没有多行编辑。
-- 命令目前只有 `/send file`、`/recv file`；没有 `/help`、搜索、交互式教程、主题、鼠标。
+- 命令目前只有 `/sendfile`、`/recvfile`；没有 `/help`、搜索、交互式教程、主题、鼠标。
 - Windows/macOS 路径已适配，但真机验收仍待完成。
 - mDNS 依赖局域网多播；在容器/受限网络里可能需要 `--connect`。
 
@@ -509,7 +509,7 @@ cargo test
 cargo build --release
 ```
 
-旧版实现保留在 [`old/`](old/)，不参与编译。0.1.0 的历史需求在 [docs/requ/0.1.0/README.md](docs/requ/0.1.0/README.md)，0.1.1 联网设计与决策在 [docs/0.1.1/README.md](docs/0.1.1/README.md)，0.1.2 文件传递需求在 [docs/0.1.2/README.md](docs/0.1.2/README.md)，0.1.3 帮助页面需求在 [docs/0.1.3/README.md](docs/0.1.3/README.md)，0.1.4 跨平台路径适配在 [docs/0.1.4/README.md](docs/0.1.4/README.md)，0.1.5 node_id 用户名在 [docs/0.1.5/README.md](docs/0.1.5/README.md)，0.1.6 短号在 [docs/0.1.6/README.md](docs/0.1.6/README.md)，0.1.7 改名/状态栏在 [docs/0.1.7/README.md](docs/0.1.7/README.md)。
+旧版实现保留在 [`old/`](old/)，不参与编译。0.1.0 的历史需求在 [docs/requ/0.1.0/README.md](docs/requ/0.1.0/README.md)，0.1.1 联网设计与决策在 [docs/0.1.1/README.md](docs/0.1.1/README.md)，0.1.2 文件传递需求在 [docs/0.1.2/README.md](docs/0.1.2/README.md)，0.1.3 帮助页面需求在 [docs/0.1.3/README.md](docs/0.1.3/README.md)，0.1.4 跨平台路径适配在 [docs/0.1.4/README.md](docs/0.1.4/README.md)，0.1.5 node_id 用户名在 [docs/0.1.5/README.md](docs/0.1.5/README.md)，0.1.6 短号在 [docs/0.1.6/README.md](docs/0.1.6/README.md)，0.1.7 改名/状态栏在 [docs/0.1.7/README.md](docs/0.1.7/README.md)，0.1.8 命令改名在 [docs/0.1.8/README.md](docs/0.1.8/README.md)。
 
 ## 许可证
 

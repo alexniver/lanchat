@@ -39,8 +39,8 @@ pub fn lines(keymap: &Keymap, files_dir: &Path) -> Vec<String> {
         "  - 显示为 名字 (noN)，并写入配置".to_string(),
         String::new(),
         "文件传递".to_string(),
-        "  /send file <路径> to <对方>".to_string(),
-        "  /recv file <对方>".to_string(),
+        "  /sendfile <路径> to <对方>".to_string(),
+        "  /recvfile <对方>".to_string(),
         "  - 对方可用 no1、ip101、完整 node_id、IP、昵称".to_string(),
         "  - 请求 10 分钟未接收自动取消".to_string(),
         format!("  - 保存到 {}", files_dir.display()),
@@ -80,7 +80,7 @@ mod tests {
         let text = lines.join("\n");
         assert!(text.starts_with("LanChat "));
         assert!(text.contains("快速开始"));
-        assert!(text.contains("/send file"));
+        assert!(text.contains("/sendfile"));
         assert!(text.contains("按 Esc") || text.contains("Esc"));
         assert!(lines.len() > 20);
     }
