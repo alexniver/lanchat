@@ -15,7 +15,7 @@
 ### Changed
 
 - 版本号更新为 0.1.10。
-- Release 使用 `macos-15-intel` 构建 Intel macOS，macOS 14 构建 Apple Silicon。
+- Release 使用 `macos-15-intel` 构建 Intel macOS，macOS 15 构建 Apple Silicon。
 - README 增加预编译版本说明；发布细节见 `docs/0.1.10/`。
 
 ## [0.1.9] - 2026-11-20

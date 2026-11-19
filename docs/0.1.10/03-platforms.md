@@ -19,7 +19,7 @@
 ## macOS
 
 - Intel：`x86_64-apple-darwin`，用 Intel runner（如 `macos-15-intel`，以当前 GitHub 标签为准）。
-- Apple Silicon：`aarch64-apple-darwin`，用 ARM runner（`macos-14`/`macos-15`）。
+- Apple Silicon：`aarch64-apple-darwin`，用 ARM runner（`macos-15`；`macos-14` 已于 2026-11-02 退役）。
 - 可以分别发两个包，也可以 `lipo` 合成 universal 包；首版建议分开，简单可验证。
 - 未签名/未公证的下载二进制可能被 Gatekeeper 拦截；用户可 `xattr -d com.apple.quarantine`，但体验一般。
 - 正式分发可考虑 Apple Developer 签名+公证；需要账号/证书，0.1.10 不强制。

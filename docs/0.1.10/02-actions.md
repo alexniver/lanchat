@@ -41,7 +41,7 @@ strategy:
       - os: macos-15-intel    # Intel
         target: x86_64-apple-darwin
         archive: tar.gz
-      - os: macos-14          # Apple Silicon
+      - os: macos-15          # Apple Silicon
         target: aarch64-apple-darwin
         archive: tar.gz
 ```
