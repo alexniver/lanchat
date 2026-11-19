@@ -1879,12 +1879,14 @@ mod tests {
     }
 
     async fn wait_peer_up(rx: &mut mpsc::Receiver<NetEvent>) -> bool {
+        // Windows CI can take longer than 500ms to establish the loopback
+        // connection; keep waiting for the whole 10 second budget.
         for _ in 0..20 {
             match timeout(Duration::from_millis(500), rx.recv()).await {
                 Ok(Some(NetEvent::PeerUp { .. })) => return true,
                 Ok(Some(_)) => continue,
                 Ok(None) => return false,
-                Err(_) => return false,
+                Err(_) => continue,
             }
         }
         false
@@ -1896,7 +1898,7 @@ mod tests {
                 Ok(Some(NetEvent::ChatReceived(chat))) => return Some(chat),
                 Ok(Some(_)) => continue,
                 Ok(None) => return None,
-                Err(_) => return None,
+                Err(_) => continue,
             }
         }
         None
