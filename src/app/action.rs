@@ -18,6 +18,17 @@ pub enum Effect {
         path: std::path::PathBuf,
         name: String,
         size: u64,
+        folder: Option<crate::net::protocol::FolderMeta>,
+    },
+    SendFolder {
+        node_id: String,
+        transfer_id: String,
+        path: std::path::PathBuf,
+        root_name: String,
+        archive_size: u64,
+        total_size: u64,
+        file_count: u32,
+        empty_dirs: u32,
     },
     AcceptFiles {
         node_id: String,

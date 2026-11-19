@@ -10,6 +10,13 @@ pub enum ParsedCommand {
     RecvFile {
         peer: String,
     },
+    SendFolder {
+        path: String,
+        peer: String,
+    },
+    RecvFolder {
+        peer: String,
+    },
     SetName {
         name: String,
     },
@@ -23,6 +30,8 @@ pub enum ParsedCommand {
 
 pub const SEND_USAGE: &str = "用法：/sendfile <文件路径> to <对方>";
 pub const RECV_USAGE: &str = "用法：/recvfile <对方>";
+pub const SEND_FOLDER_USAGE: &str = "用法：/sendfolder <目录> to <对方>";
+pub const RECV_FOLDER_USAGE: &str = "用法：/recvfolder <对方>";
 pub const SETNAME_USAGE: &str = "用法：/setname <新名字>";
 
 pub fn parse(input: &str) -> ParsedCommand {
@@ -35,6 +44,15 @@ pub fn parse(input: &str) -> ParsedCommand {
     }
     if text == "/recvfile" || text.starts_with("/recvfile ") {
         return parse_recv_file(text, "/recvfile ");
+    }
+    if text == "/sendfolder" || text.starts_with("/sendfolder ") {
+        return parse_folder_path(text, "/sendfolder ", SEND_FOLDER_USAGE, true);
+    }
+    if text == "/recvfolder" || text.starts_with("/recvfolder ") {
+        return parse_folder_path(text, "/recvfolder ", RECV_FOLDER_USAGE, false);
+    }
+    if text == "/recv folder" || text.starts_with("/recv folder ") {
+        return parse_folder_path(text, "/recv folder ", RECV_FOLDER_USAGE, false);
     }
     // 0.1.7 compatibility aliases; not shown in help.
     if text == "/send" || text.starts_with("/send ") {
@@ -82,6 +100,42 @@ fn parse_recv_file(text: &str, prefix: &str) -> ParsedCommand {
     }
     ParsedCommand::RecvFile {
         peer: peer.to_string(),
+    }
+}
+
+fn parse_folder_path(
+    text: &str,
+    prefix: &str,
+    usage: &'static str,
+    sending: bool,
+) -> ParsedCommand {
+    let Some(rest) = text.strip_prefix(prefix) else {
+        return ParsedCommand::Invalid { usage };
+    };
+    let rest = rest.trim();
+    if sending {
+        let Some(index) = rest.rfind(" to ") else {
+            return ParsedCommand::Invalid { usage };
+        };
+        let path = strip_quotes(rest[..index].trim());
+        let peer = rest[index + 4..].trim();
+        if path.is_empty() || peer.is_empty() {
+            ParsedCommand::Invalid { usage }
+        } else {
+            ParsedCommand::SendFolder {
+                path: path.to_string(),
+                peer: peer.to_string(),
+            }
+        }
+    } else {
+        let peer = strip_quotes(rest);
+        if peer.is_empty() || peer.split_whitespace().count() != 1 {
+            ParsedCommand::Invalid { usage }
+        } else {
+            ParsedCommand::RecvFolder {
+                peer: peer.to_string(),
+            }
+        }
     }
 }
 
@@ -191,6 +245,31 @@ mod tests {
             parse("/set name"),
             ParsedCommand::Invalid {
                 usage: SETNAME_USAGE
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_folder_commands() {
+        assert_eq!(
+            parse("/sendfolder ~/Photos to no1"),
+            ParsedCommand::SendFolder {
+                path: "~/Photos".into(),
+                peer: "no1".into()
+            }
+        );
+        assert_eq!(
+            parse("/recvfolder no1"),
+            ParsedCommand::RecvFolder { peer: "no1".into() }
+        );
+        assert_eq!(
+            parse("/recv folder no1"),
+            ParsedCommand::RecvFolder { peer: "no1".into() }
+        );
+        assert!(matches!(
+            parse("/sendfolder ~/Photos"),
+            ParsedCommand::Invalid {
+                usage: SEND_FOLDER_USAGE
             }
         ));
     }

@@ -105,6 +105,34 @@ mod tests {
     }
 
     #[test]
+    fn list_status_shows_help_hint_on_the_right_only() {
+        let mut app = test_app(vec![Message::new("alice@arch", "你好")]);
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let text = buffer_text(terminal.backend().buffer()).replace(' ', "");
+        assert!(text.contains("[?]帮助"));
+
+        app.handle_key(Key::Char('i'));
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let text = buffer_text(terminal.backend().buffer()).replace(' ', "");
+        assert!(!text.contains("[?]帮助"));
+
+        app.handle_key(Key::Esc);
+        app.handle_key(Key::Space);
+        app.handle_key(Key::Char('u'));
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let text = buffer_text(terminal.backend().buffer()).replace(' ', "");
+        assert!(!text.contains("[?]帮助"));
+
+        app.handle_key(Key::Esc);
+        app.handle_key(Key::Char('?'));
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let text = buffer_text(terminal.backend().buffer()).replace(' ', "");
+        assert!(!text.contains("[?]帮助"));
+    }
+
+    #[test]
     fn renders_help_panel_and_status() {
         let mut app = test_app(vec![Message::new("alice@arch", "你好")]);
         app.handle_key(Key::Char('?'));
@@ -115,7 +143,7 @@ mod tests {
         assert!(text.contains("帮助"));
         assert!(text.contains("快速开始"));
         assert!(text.contains("按Esc退出帮助"));
-        assert!(text.contains("LanChat0.1.8"));
+        assert!(text.contains("LanChat0.1.9"));
         assert!(text.contains("本机"));
         assert!(!text.contains("信息列表"));
         assert!(!text.contains("在线1"));

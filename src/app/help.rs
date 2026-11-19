@@ -41,6 +41,8 @@ pub fn lines(keymap: &Keymap, files_dir: &Path) -> Vec<String> {
         "文件传递".to_string(),
         "  /sendfile <路径> to <对方>".to_string(),
         "  /recvfile <对方>".to_string(),
+        "  /sendfolder <目录> to <对方>".to_string(),
+        "  /recvfolder <对方>（/recv folder）".to_string(),
         "  - 对方可用 no1、ip101、完整 node_id、IP、昵称".to_string(),
         "  - 请求 10 分钟未接收自动取消".to_string(),
         format!("  - 保存到 {}", files_dir.display()),
@@ -62,7 +64,7 @@ pub fn lines(keymap: &Keymap, files_dir: &Path) -> Vec<String> {
         "限制".to_string(),
         "  - 单房间、明文、无鉴权".to_string(),
         "  - 无历史同步、无断点续传".to_string(),
-        "  - 单条消息 16 KiB；单文件 1 GiB".to_string(),
+        "  - 单条消息 16 KiB；收发前检查磁盘空间".to_string(),
         "  - 仅局域网".to_string(),
     ];
     // Keep the final newline out; the renderer handles the last line.

@@ -4,8 +4,10 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, StatusKind};
+use crate::key::ActionId;
 use crate::net::ConnectionState;
 use crate::ui::text::truncate_display;
 use crate::ui::theme;
@@ -17,7 +19,23 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(block, area);
         return;
     }
-    let text = truncate_display(&status_text(app), inner.width as usize);
+    let width = inner.width as usize;
+    let left_full = status_text(app);
+    let right = help_hint(app);
+    let right_width = right.as_deref().map(UnicodeWidthStr::width).unwrap_or(0);
+    let text = if let Some(right) = right {
+        if width > right_width + 1 {
+            let left_width = width - right_width - 1;
+            let left = truncate_display(&left_full, left_width);
+            let left_width = UnicodeWidthStr::width(left.as_str());
+            let padding = width.saturating_sub(left_width + right_width);
+            format!("{left}{}{right}", " ".repeat(padding))
+        } else {
+            truncate_display(&left_full, width)
+        }
+    } else {
+        truncate_display(&left_full, width)
+    };
     let style = Style::default().fg(status_color(app));
     f.render_widget(Paragraph::new(text).style(style).block(block), area);
 }
@@ -66,6 +84,19 @@ pub fn status_text(app: &App) -> String {
         }
     }
     parts.join(" · ")
+}
+
+/// `[?]帮助` is only shown in the List layer, where `?` actually opens help.
+fn help_hint(app: &App) -> Option<String> {
+    if app.layers.len() != 1 || !matches!(app.layers.first(), Some(crate::app::Layer::List(_))) {
+        return None;
+    }
+    let hint = app.keymap.hint(ActionId::OpenHelp);
+    if hint == "未绑定" || hint.is_empty() {
+        None
+    } else {
+        Some(format!("[{hint}]帮助"))
+    }
 }
 
 pub fn help_status(app: &App) -> String {

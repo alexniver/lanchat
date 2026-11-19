@@ -150,6 +150,17 @@ pub struct FileOffer {
     pub transfer_id: String,
     pub name: String,
     pub size: u64,
+    /// Present when `name`/`size` describe a zip archive of a folder.
+    #[serde(default)]
+    pub folder: Option<FolderMeta>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FolderMeta {
+    pub root_name: String,
+    pub total_size: u64,
+    pub file_count: u32,
+    pub empty_dirs: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -308,6 +319,7 @@ mod tests {
                 transfer_id: "t1".into(),
                 name: "a.png".into(),
                 size: 123,
+                folder: None,
             }),
             WireMessage::FileAccept(FileAccept {
                 transfer_ids: vec!["t1".into()],
@@ -364,13 +376,15 @@ mod tests {
         assert!(validate_file_offer(&FileOffer {
             transfer_id: "t1".into(),
             name: "a.png".into(),
-            size: 1
+            size: 1,
+            folder: None,
         })
         .is_ok());
         assert!(validate_file_offer(&FileOffer {
             transfer_id: "t1".into(),
             name: "../a.png".into(),
-            size: 1
+            size: 1,
+            folder: None,
         })
         .is_err());
         let mut bad = chat();

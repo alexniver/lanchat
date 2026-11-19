@@ -1,4 +1,5 @@
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -8,10 +9,10 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use crate::net::protocol::{
-    read_frame, write_frame, FileChunk, FileDataDone, FileDataHello, FileDataReady, WireMessage,
+    read_frame, write_frame, FileChunk, FileDataDone, FileDataHello, FileDataReady, FolderMeta,
+    WireMessage,
 };
 
-pub const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_PENDING_PER_PEER: usize = 20;
 pub const MAX_PENDING_TOTAL: usize = 100;
 pub const CHUNK_BYTES: usize = 16 * 1024;
@@ -28,6 +29,7 @@ pub struct IncomingFile {
     pub transfer_id: String,
     pub name: String,
     pub size: u64,
+    pub folder: Option<FolderMeta>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +37,17 @@ pub struct ReceivedFile {
     pub transfer_id: String,
     pub name: String,
     pub path: PathBuf,
+    pub is_folder: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct FolderArchive {
+    pub path: PathBuf,
+    pub archive_size: u64,
+    pub total_size: u64,
+    pub file_count: u32,
+    pub empty_dirs: u32,
+    pub skipped_symlinks: u32,
 }
 
 pub async fn send_files(
@@ -133,8 +146,14 @@ pub async fn receive_files(
     let mut writers: std::collections::HashMap<String, Writer> = std::collections::HashMap::new();
     for id in &ids {
         let meta = by_id[id.as_str()];
-        let path = unique_path(files_dir, &meta.name).await?;
-        let part = part_path(files_dir, &meta.name, id);
+        let (path, part, is_folder) = if meta.folder.is_some() {
+            let archive = files_dir.join(format!(".lanchat-folder-{id}.zip"));
+            (archive.clone(), archive, true)
+        } else {
+            let path = unique_path(files_dir, &meta.name).await?;
+            let part = part_path(files_dir, &meta.name, id);
+            (path, part, false)
+        };
         let file = tokio::fs::File::create(&part).await?;
         set_file_mode(&part, 0o600);
         writers.insert(
@@ -146,6 +165,7 @@ pub async fn receive_files(
                 file: Some(file),
                 received: 0,
                 next_seq: 0,
+                is_folder,
             },
         );
     }
@@ -199,6 +219,28 @@ pub async fn receive_files(
                 file.flush().await?;
                 file.sync_all().await?;
             }
+            if writer.is_folder {
+                let root = writer
+                    .meta
+                    .folder
+                    .as_ref()
+                    .map(|folder| folder.root_name.clone())
+                    .unwrap_or_else(|| writer.meta.name.clone());
+                let archive = writer.part.clone();
+                let dir = files_dir.to_path_buf();
+                let extract_root = root.clone();
+                let final_path = tokio::task::spawn_blocking(move || {
+                    extract_folder(&archive, &dir, &extract_root)
+                })
+                .await??;
+                received.push(ReceivedFile {
+                    transfer_id: id,
+                    name: root,
+                    path: final_path,
+                    is_folder: true,
+                });
+                continue;
+            }
             if let Err(error) = tokio::fs::rename(&writer.part, &writer.path).await {
                 let _ = tokio::fs::remove_file(&writer.part).await;
                 return Err(error.into());
@@ -207,6 +249,7 @@ pub async fn receive_files(
                 transfer_id: id,
                 name: writer.meta.name.clone(),
                 path: writer.path,
+                is_folder: false,
             });
         }
         Ok::<_, anyhow::Error>(received)
@@ -228,6 +271,7 @@ struct Writer {
     file: Option<tokio::fs::File>,
     received: u64,
     next_seq: u64,
+    is_folder: bool,
 }
 
 pub async fn unique_path(dir: &Path, name: &str) -> Result<PathBuf> {
@@ -361,6 +405,211 @@ fn set_file_mode(path: &Path, mode: u32) {
 #[cfg(not(unix))]
 fn set_file_mode(_path: &Path, _mode: u32) {}
 
+pub fn create_folder_archive(source: &Path) -> Result<FolderArchive> {
+    if !source.is_dir() {
+        bail!("不是文件夹: {}", source.display());
+    }
+    let path = std::env::temp_dir().join(format!("lanchat-folder-{}.zip", uuid::Uuid::new_v4()));
+    let file = fs::File::create(&path)
+        .with_context(|| format!("创建文件夹压缩包失败: {}", path.display()))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut archive = FolderArchive {
+        path: path.clone(),
+        archive_size: 0,
+        total_size: 0,
+        file_count: 0,
+        empty_dirs: 0,
+        skipped_symlinks: 0,
+    };
+    if let Err(error) = add_dir_to_archive(source, source, &mut zip, options, &mut archive) {
+        let _ = fs::remove_file(&path);
+        return Err(error);
+    }
+    let file = match zip.finish() {
+        Ok(file) => file,
+        Err(error) => {
+            let _ = fs::remove_file(&path);
+            return Err(error.into());
+        }
+    };
+    file.sync_all().ok();
+    drop(file);
+    archive.archive_size = fs::metadata(&path)?.len();
+    Ok(archive)
+}
+
+fn add_dir_to_archive(
+    root: &Path,
+    dir: &Path,
+    zip: &mut zip::ZipWriter<fs::File>,
+    options: zip::write::SimpleFileOptions,
+    archive: &mut FolderArchive,
+) -> Result<()> {
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| format!("读取目录失败: {}", dir.display()))?
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if metadata.file_type().is_symlink() {
+            archive.skipped_symlinks += 1;
+            continue;
+        }
+        if metadata.is_dir() {
+            let name = format!("{relative}/");
+            zip.add_directory(&name, options)?;
+            let before = archive.empty_dirs;
+            add_dir_to_archive(root, &path, zip, options, archive)?;
+            let has_children = fs::read_dir(&path)?.next().is_some();
+            if !has_children {
+                archive.empty_dirs += 1;
+            } else {
+                archive.empty_dirs = before;
+            }
+        } else if metadata.is_file() {
+            zip.start_file(&relative, options)?;
+            let mut input = fs::File::open(&path)
+                .with_context(|| format!("读取文件失败: {}", path.display()))?;
+            std::io::copy(&mut input, zip)?;
+            archive.total_size = archive.total_size.saturating_add(metadata.len());
+            archive.file_count = archive.file_count.saturating_add(1);
+        }
+    }
+    Ok(())
+}
+
+fn extract_folder(archive_path: &Path, files_dir: &Path, root_name: &str) -> Result<PathBuf> {
+    let root = sanitize_name(root_name)?;
+    let final_path = unique_path_sync(files_dir, &root)?;
+    let staging = files_dir.join(format!(".lanchat-folder-{}.tmp", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&staging)?;
+    let result = (|| -> Result<()> {
+        let file = fs::File::open(archive_path)?;
+        let mut zip = zip::ZipArchive::new(file)?;
+        for index in 0..zip.len() {
+            let mut entry = zip.by_index(index)?;
+            let Some(path) = entry.enclosed_name() else {
+                bail!("压缩包包含非法路径");
+            };
+            if entry
+                .unix_mode()
+                .is_some_and(|mode| mode & 0o170000 == 0o120000)
+            {
+                continue;
+            }
+            let mut target = staging.clone();
+            for component in path.components() {
+                let Component::Normal(value) = component else {
+                    bail!("压缩包包含非法路径");
+                };
+                let value = value.to_string_lossy();
+                target.push(sanitize_name(&value)?);
+            }
+            if entry.is_dir() {
+                fs::create_dir_all(&target)?;
+            } else {
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut output = fs::File::create(&target)?;
+                std::io::copy(&mut entry, &mut output)?;
+                output.sync_all().ok();
+            }
+        }
+        fs::rename(&staging, &final_path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+        let _ = fs::remove_file(archive_path);
+        return result.map(|_| final_path);
+    }
+    let _ = fs::remove_file(archive_path);
+    Ok(final_path)
+}
+
+fn unique_path_sync(dir: &Path, name: &str) -> Result<PathBuf> {
+    let name = sanitize_name(name)?;
+    let candidate = dir.join(&name);
+    if !candidate.exists() {
+        return Ok(candidate);
+    }
+    let path = Path::new(&name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("folder");
+    let ext = path.extension().and_then(|value| value.to_str());
+    for index in 0..10_000 {
+        let candidate = match ext {
+            Some(ext) => dir.join(format!("{stem}[{index}].{ext}")),
+            None => dir.join(format!("{stem}[{index}]")),
+        };
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    bail!("无法生成不重复的文件夹名")
+}
+
+/// Free bytes available on the filesystem containing `path`.
+pub fn available_space(path: &Path) -> Result<u64> {
+    #[cfg(unix)]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let path = CString::new(path.as_os_str().as_bytes())?;
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        if unsafe { libc::statvfs(path.as_ptr(), &mut stat) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use std::ptr::null_mut;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetDiskFreeSpaceExW(
+                directory: *const u16,
+                free_to_caller: *mut u64,
+                total: *mut u64,
+                free_total: *mut u64,
+            ) -> i32;
+        }
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut free = 0u64;
+        let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, null_mut(), null_mut()) };
+        if ok == 0 {
+            Err(std::io::Error::last_os_error().into())
+        } else {
+            Ok(free)
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        bail!("当前平台不支持磁盘空间检测")
+    }
+}
+
+pub fn required_for_transfer(bytes: u64) -> u64 {
+    bytes.saturating_mul(3).saturating_add(1) / 2
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,5 +655,60 @@ mod tests {
         let safe = sanitize_name(&name).unwrap();
         assert!(safe.len() <= 255);
         assert!(safe.ends_with(".png"));
+    }
+    #[tokio::test]
+    async fn creates_and_extracts_a_folder_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("holiday");
+        std::fs::create_dir_all(source.join("sub")).unwrap();
+        std::fs::write(source.join("a.txt"), b"one").unwrap();
+        std::fs::write(source.join("sub/b.txt"), b"two").unwrap();
+        std::fs::create_dir_all(source.join("empty")).unwrap();
+        let archive = create_folder_archive(&source).unwrap();
+        assert!(archive.file_count >= 2);
+        let files = tempfile::tempdir().unwrap();
+        let final_path = tokio::task::spawn_blocking({
+            let archive = archive.path.clone();
+            let files = files.path().to_path_buf();
+            move || extract_folder(&archive, &files, "holiday")
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(std::fs::read(final_path.join("a.txt")).unwrap(), b"one");
+        assert_eq!(std::fs::read(final_path.join("sub/b.txt")).unwrap(), b"two");
+        assert!(final_path.join("empty").is_dir());
+    }
+
+    #[test]
+    fn disk_space_checks_use_a_margin() {
+        assert_eq!(required_for_transfer(100), 150);
+        let dir = tempfile::tempdir().unwrap();
+        assert!(available_space(dir.path()).is_ok());
+    }
+    #[tokio::test]
+    async fn folder_archive_skips_symlinks_and_renames_collision() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("holiday");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("a.txt"), b"one").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(source.join("a.txt"), source.join("link.txt")).unwrap();
+        let archive = create_folder_archive(&source).unwrap();
+        assert!(archive.file_count >= 1);
+        #[cfg(unix)]
+        assert_eq!(archive.skipped_symlinks, 1);
+        let files = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(files.path().join("holiday")).unwrap();
+        let final_path = tokio::task::spawn_blocking({
+            let archive = archive.path.clone();
+            let files = files.path().to_path_buf();
+            move || extract_folder(&archive, &files, "holiday")
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(final_path.file_name().unwrap(), "holiday[0]");
+        assert_eq!(std::fs::read(final_path.join("a.txt")).unwrap(), b"one");
     }
 }

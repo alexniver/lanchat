@@ -15,8 +15,8 @@ use crate::net::discovery::{self, Discovery, DiscoveryEvent};
 use crate::net::file::{self, IncomingFile, OutgoingFile};
 use crate::net::protocol::{
     read_frame, validate_chat, validate_file_offer, validate_hello, write_frame, Bye, Chat,
-    FileAccept, FileCancel, FileComplete, FileDataHello, FileError, FileOffer, Hello, Ping, Pong,
-    Ready, WireMessage, MAGIC, MAX_BODY_BYTES, PROTOCOL_VERSION, ROOM,
+    FileAccept, FileCancel, FileComplete, FileDataHello, FileError, FileOffer, FolderMeta, Hello,
+    Ping, Pong, Ready, WireMessage, MAGIC, MAX_BODY_BYTES, PROTOCOL_VERSION, ROOM,
 };
 
 const CHANNEL_CAPACITY: usize = 64;
@@ -49,10 +49,21 @@ pub enum NetCommand {
         path: PathBuf,
         name: String,
         size: u64,
+        folder: Option<FolderMeta>,
     },
     AcceptFiles {
         node_id: String,
         transfer_ids: Vec<String>,
+    },
+    SendFolder {
+        node_id: String,
+        transfer_id: String,
+        path: PathBuf,
+        root_name: String,
+        archive_size: u64,
+        total_size: u64,
+        file_count: u32,
+        empty_dirs: u32,
     },
     SetName {
         name: String,
@@ -86,44 +97,52 @@ pub enum NetEvent {
         transfer_id: String,
         file_name: String,
         size: u64,
+        folder: Option<FolderMeta>,
     },
     FileOfferSent {
         node_id: String,
         transfer_id: String,
         file_name: String,
+        folder: Option<FolderMeta>,
     },
     FileAccepted {
         node_id: String,
         transfer_ids: Vec<String>,
+        is_folder: bool,
     },
     FileReceived {
         node_id: String,
         transfer_id: String,
         file_name: String,
         path: PathBuf,
+        is_folder: bool,
     },
     FileSent {
         node_id: String,
         transfer_id: String,
         file_name: String,
+        is_folder: bool,
     },
     FileFailed {
         node_id: String,
         transfer_id: String,
         file_name: String,
         reason: String,
+        is_folder: bool,
     },
     FileCancelled {
         node_id: String,
         transfer_id: String,
         file_name: String,
         reason: String,
+        is_folder: bool,
     },
     FileTimedOut {
         node_id: String,
         transfer_id: String,
         file_name: String,
         outgoing: bool,
+        is_folder: bool,
     },
     FileCommandError {
         message: String,
@@ -218,6 +237,7 @@ struct PeerEntry {
     supports_files: bool,
     supports_short_no: bool,
     supports_name_update: bool,
+    supports_folder: bool,
     short_no: u32,
     last_seen: Instant,
     last_ping: Instant,
@@ -227,6 +247,7 @@ struct OutgoingOffer {
     node_id: String,
     name: String,
     path: PathBuf,
+    folder: Option<FolderMeta>,
     created: Instant,
     transferring: bool,
 }
@@ -235,6 +256,7 @@ struct IncomingOffer {
     node_id: String,
     name: String,
     size: u64,
+    folder: Option<FolderMeta>,
     created: Instant,
     accepted: bool,
 }
@@ -423,8 +445,29 @@ impl Manager {
                 path,
                 name,
                 size,
+                folder,
             } => {
-                self.send_file_offer(node_id, transfer_id, path, name, size)
+                self.send_file_offer(node_id, transfer_id, path, name, size, folder)
+                    .await;
+                false
+            }
+            NetCommand::SendFolder {
+                node_id,
+                transfer_id,
+                path,
+                root_name,
+                archive_size,
+                total_size,
+                file_count,
+                empty_dirs,
+            } => {
+                let folder = FolderMeta {
+                    root_name: root_name.clone(),
+                    total_size,
+                    file_count,
+                    empty_dirs,
+                };
+                self.send_folder_offer(node_id, transfer_id, path, root_name, archive_size, folder)
                     .await;
                 false
             }
@@ -545,6 +588,7 @@ impl Manager {
         path: PathBuf,
         name: String,
         size: u64,
+        folder: Option<FolderMeta>,
     ) {
         let Some(peer) = self.peers.get(&node_id) else {
             self.file_command_error("对方不在线".to_string()).await;
@@ -555,20 +599,9 @@ impl Manager {
                 .await;
             return;
         }
-        if size > file::MAX_FILE_BYTES {
-            self.file_command_error("文件太大（上限 1 GiB）".to_string())
+        if folder.is_some() && !peer.supports_folder {
+            self.file_command_error("对方版本不支持文件夹传递，请升级后重试".to_string())
                 .await;
-            return;
-        }
-        if self
-            .outgoing
-            .values()
-            .any(|offer| offer.node_id == node_id && offer.name == name && offer.transferring)
-        {
-            self.file_command_error(format!(
-                "{name} 的请求已经发给对方了，请等对方接收完成后再发。"
-            ))
-            .await;
             return;
         }
         if self
@@ -586,6 +619,7 @@ impl Manager {
             transfer_id: transfer_id.clone(),
             name: name.clone(),
             size,
+            folder: folder.clone(),
         };
         if validate_file_offer(&offer).is_err() {
             self.file_command_error("文件名不合法".to_string()).await;
@@ -606,6 +640,7 @@ impl Manager {
                 node_id: node_id.clone(),
                 name: name.clone(),
                 path,
+                folder: folder.clone(),
                 created: Instant::now(),
                 transferring: false,
             },
@@ -616,26 +651,90 @@ impl Manager {
                 node_id,
                 transfer_id,
                 file_name: name,
+                folder,
             })
             .await;
     }
 
+    async fn send_folder_offer(
+        &mut self,
+        node_id: String,
+        transfer_id: String,
+        path: PathBuf,
+        root_name: String,
+        archive_size: u64,
+        folder: FolderMeta,
+    ) {
+        self.send_file_offer(
+            node_id,
+            transfer_id,
+            path,
+            root_name,
+            archive_size,
+            Some(folder),
+        )
+        .await;
+    }
+
     async fn accept_files(&mut self, node_id: String, transfer_ids: Vec<String>) {
         let mut accepted = Vec::new();
-        for id in transfer_ids {
-            let Some(offer) = self.incoming.get_mut(&id) else {
+        let mut required = 0u64;
+        let mut folders = std::collections::HashMap::new();
+        for id in &transfer_ids {
+            let Some(offer) = self.incoming.get(id) else {
                 continue;
             };
             if offer.node_id != node_id || offer.accepted {
                 continue;
             }
-            offer.accepted = true;
-            accepted.push(id);
+            let size = offer
+                .folder
+                .as_ref()
+                .map(|folder| folder.total_size)
+                .unwrap_or(offer.size);
+            required = required.saturating_add(size);
+            folders.insert(id.clone(), offer.folder.is_some());
+            accepted.push(id.clone());
         }
         if accepted.is_empty() {
             self.file_command_error("没有来自该用户的待接收文件。".to_string())
                 .await;
             return;
+        }
+        let free = file::available_space(&self.files_dir).ok();
+        if free.is_none_or(|free| free < file::required_for_transfer(required)) {
+            for id in &accepted {
+                if let Some(offer) = self.incoming.remove(id) {
+                    if let Some(peer) = self.peers.get(&node_id) {
+                        let _ = peer.tx.try_send(WireMessage::FileError(FileError {
+                            transfer_id: id.clone(),
+                            code: "no_space".to_string(),
+                            message: "磁盘空间不足，传送失败".to_string(),
+                        }));
+                    }
+                    let _ = self
+                        .events
+                        .send(NetEvent::FileFailed {
+                            node_id: node_id.clone(),
+                            transfer_id: id.clone(),
+                            file_name: offer.name,
+                            reason: "磁盘空间不足，传送失败".to_string(),
+                            is_folder: offer.folder.is_some(),
+                        })
+                        .await;
+                }
+            }
+            return;
+        }
+        let is_folder = accepted.iter().any(|id| {
+            self.incoming
+                .get(id)
+                .is_some_and(|offer| offer.folder.is_some())
+        });
+        for id in &accepted {
+            if let Some(offer) = self.incoming.get_mut(id) {
+                offer.accepted = true;
+            }
         }
         if let Some(peer) = self.peers.get(&node_id) {
             let _ = peer.tx.try_send(WireMessage::FileAccept(FileAccept {
@@ -647,6 +746,7 @@ impl Manager {
             .send(NetEvent::FileAccepted {
                 node_id,
                 transfer_ids: accepted,
+                is_folder,
             })
             .await;
     }
@@ -754,6 +854,7 @@ impl Manager {
                         tx: peer_tx,
                         close: close_tx,
                         supports_files: capabilities.iter().any(|item| item == "file_transfer"),
+                        supports_folder: capabilities.iter().any(|item| item == "folder_transfer"),
                         supports_short_no,
                         supports_name_update: capabilities.iter().any(|item| item == "name_update"),
                         short_no: peer_short_no,
@@ -820,6 +921,7 @@ impl Manager {
                             transfer_id: file.transfer_id,
                             file_name: file.name,
                             path: file.path,
+                            is_folder: file.is_folder,
                         })
                         .await;
                 }
@@ -836,12 +938,15 @@ impl Manager {
                 reason,
             } => {
                 for transfer_id in transfer_ids {
-                    let name = self
-                        .outgoing
-                        .remove(&transfer_id)
-                        .map(|offer| offer.name)
-                        .or_else(|| self.incoming.remove(&transfer_id).map(|offer| offer.name))
+                    let removed = self.take_file_offer(&transfer_id);
+                    let name = removed
+                        .as_ref()
+                        .map(|(name, _, _)| name.clone())
                         .unwrap_or_else(|| "文件".to_string());
+                    let is_folder = removed.as_ref().is_some_and(|(_, folder, _)| *folder);
+                    if let Some((_, true, Some(path))) = removed {
+                        let _ = std::fs::remove_file(path);
+                    }
                     if let Some(peer) = self.peers.get(&node_id) {
                         let _ = peer.tx.try_send(WireMessage::FileError(FileError {
                             transfer_id: transfer_id.clone(),
@@ -856,6 +961,7 @@ impl Manager {
                             transfer_id,
                             file_name: name,
                             reason: reason.clone(),
+                            is_folder,
                         })
                         .await;
                 }
@@ -910,6 +1016,7 @@ impl Manager {
                         transfer_id: id.clone(),
                         name: offer.name.clone(),
                         size: offer.size,
+                        folder: offer.folder.clone(),
                     })
                 })
             })
@@ -957,6 +1064,16 @@ impl Manager {
         let _ = node_id;
     }
 
+    fn take_file_offer(&mut self, transfer_id: &str) -> Option<(String, bool, Option<PathBuf>)> {
+        if let Some(offer) = self.outgoing.remove(transfer_id) {
+            Some((offer.name, offer.folder.is_some(), Some(offer.path)))
+        } else {
+            self.incoming
+                .remove(transfer_id)
+                .map(|offer| (offer.name, offer.folder.is_some(), None))
+        }
+    }
+
     async fn handle_message(&mut self, node_id: String, message: WireMessage) {
         let Some(peer) = self.peers.get_mut(&node_id) else {
             return;
@@ -987,7 +1104,6 @@ impl Manager {
             }
             WireMessage::FileOffer(offer) => {
                 if validate_file_offer(&offer).is_err()
-                    || offer.size > file::MAX_FILE_BYTES
                     || self.incoming.len() >= file::MAX_PENDING_TOTAL
                 {
                     let _ = peer.tx.try_send(WireMessage::FileError(FileError {
@@ -1029,6 +1145,7 @@ impl Manager {
                         node_id: node_id.clone(),
                         name: offer.name.clone(),
                         size: offer.size,
+                        folder: offer.folder.clone(),
                         created: Instant::now(),
                         accepted: false,
                     },
@@ -1042,6 +1159,7 @@ impl Manager {
                         transfer_id: offer.transfer_id,
                         file_name: offer.name,
                         size: offer.size,
+                        folder: offer.folder,
                     })
                     .await;
             }
@@ -1089,40 +1207,50 @@ impl Manager {
                         }
                     }
                 });
+                let is_folder = accept.transfer_ids.iter().any(|id| {
+                    self.outgoing
+                        .get(id)
+                        .is_some_and(|offer| offer.folder.is_some())
+                });
                 let _ = self
                     .events
                     .send(NetEvent::FileAccepted {
                         node_id,
                         transfer_ids: accept.transfer_ids,
+                        is_folder,
                     })
                     .await;
             }
             WireMessage::FileComplete(complete) => {
-                let name = self
-                    .outgoing
-                    .remove(&complete.transfer_id)
-                    .map(|offer| offer.name)
+                let removed = self.take_file_offer(&complete.transfer_id);
+                let name = removed
+                    .as_ref()
+                    .map(|(name, _, _)| name.clone())
                     .unwrap_or_else(|| "文件".to_string());
+                let is_folder = removed.as_ref().is_some_and(|(_, folder, _)| *folder);
+                if let Some((_, true, Some(path))) = removed {
+                    let _ = std::fs::remove_file(path);
+                }
                 let _ = self
                     .events
                     .send(NetEvent::FileSent {
                         node_id,
                         transfer_id: complete.transfer_id,
                         file_name: name,
+                        is_folder,
                     })
                     .await;
             }
             WireMessage::FileCancel(cancel) => {
-                let name = self
-                    .outgoing
-                    .remove(&cancel.transfer_id)
-                    .map(|offer| offer.name)
-                    .or_else(|| {
-                        self.incoming
-                            .remove(&cancel.transfer_id)
-                            .map(|offer| offer.name)
-                    })
+                let removed = self.take_file_offer(&cancel.transfer_id);
+                let name = removed
+                    .as_ref()
+                    .map(|(name, _, _)| name.clone())
                     .unwrap_or_else(|| "文件".to_string());
+                let is_folder = removed.as_ref().is_some_and(|(_, folder, _)| *folder);
+                if let Some((_, true, Some(path))) = removed {
+                    let _ = std::fs::remove_file(path);
+                }
                 let _ = self
                     .events
                     .send(NetEvent::FileCancelled {
@@ -1130,6 +1258,7 @@ impl Manager {
                         transfer_id: cancel.transfer_id,
                         file_name: name,
                         reason: cancel.reason,
+                        is_folder,
                     })
                     .await;
             }
@@ -1162,16 +1291,15 @@ impl Manager {
                 }
             }
             WireMessage::FileError(error) => {
-                let name = self
-                    .outgoing
-                    .remove(&error.transfer_id)
-                    .map(|offer| offer.name)
-                    .or_else(|| {
-                        self.incoming
-                            .remove(&error.transfer_id)
-                            .map(|offer| offer.name)
-                    })
+                let removed = self.take_file_offer(&error.transfer_id);
+                let name = removed
+                    .as_ref()
+                    .map(|(name, _, _)| name.clone())
                     .unwrap_or_else(|| "文件".to_string());
+                let is_folder = removed.as_ref().is_some_and(|(_, folder, _)| *folder);
+                if let Some((_, true, Some(path))) = removed {
+                    let _ = std::fs::remove_file(path);
+                }
                 let _ = self
                     .events
                     .send(NetEvent::FileFailed {
@@ -1179,6 +1307,7 @@ impl Manager {
                         transfer_id: error.transfer_id,
                         file_name: name,
                         reason: error.message,
+                        is_folder,
                     })
                     .await;
             }
@@ -1208,6 +1337,11 @@ impl Manager {
             reason: reason.to_string(),
         }));
         let _ = peer.close.send(true);
+        for offer in self.outgoing.values() {
+            if offer.node_id == node_id && offer.folder.is_some() {
+                let _ = std::fs::remove_file(&offer.path);
+            }
+        }
         self.outgoing.retain(|_, offer| offer.node_id != node_id);
         self.incoming.retain(|_, offer| offer.node_id != node_id);
         let _ = self
@@ -1322,6 +1456,9 @@ impl Manager {
             .collect();
         for transfer_id in expired_outgoing {
             if let Some(offer) = self.outgoing.remove(&transfer_id) {
+                if offer.folder.is_some() {
+                    let _ = std::fs::remove_file(&offer.path);
+                }
                 if let Some(peer) = self.peers.get(&offer.node_id) {
                     let _ = peer.tx.try_send(WireMessage::FileCancel(FileCancel {
                         transfer_id: transfer_id.clone(),
@@ -1335,6 +1472,7 @@ impl Manager {
                         transfer_id,
                         file_name: offer.name,
                         outgoing: true,
+                        is_folder: offer.folder.is_some(),
                     })
                     .await;
             }
@@ -1362,6 +1500,7 @@ impl Manager {
                         transfer_id,
                         file_name: offer.name,
                         outgoing: false,
+                        is_folder: offer.folder.is_some(),
                     })
                     .await;
             }
@@ -1586,6 +1725,7 @@ fn local_hello(local: &Identity, listen_port: u16) -> Hello {
             "file_transfer".to_string(),
             "short_no".to_string(),
             "name_update".to_string(),
+            "folder_transfer".to_string(),
         ],
         nonce: uuid::Uuid::new_v4().to_string(),
     }
@@ -1862,6 +2002,7 @@ mod tests {
                 path: source,
                 name: "hello.txt".into(),
                 size,
+                folder: None,
             })
             .await;
 
@@ -1967,6 +2108,7 @@ mod tests {
                     path: source.clone(),
                     name: "a.txt".into(),
                     size: 3,
+                    folder: None,
                 })
                 .await;
         }
@@ -2044,6 +2186,7 @@ mod tests {
                     path,
                     name: name.into(),
                     size: body.len() as u64,
+                    folder: None,
                 })
                 .await;
         }

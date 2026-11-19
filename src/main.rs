@@ -144,6 +144,7 @@ async fn main() -> Result<()> {
                     path,
                     name,
                     size,
+                    folder,
                 } => {
                     if let Some(handle) = &net_handle {
                         let _ = handle
@@ -153,6 +154,32 @@ async fn main() -> Result<()> {
                                 path,
                                 name,
                                 size,
+                                folder,
+                            })
+                            .await;
+                    }
+                }
+                Effect::SendFolder {
+                    node_id,
+                    transfer_id,
+                    path,
+                    root_name,
+                    archive_size,
+                    total_size,
+                    file_count,
+                    empty_dirs,
+                } => {
+                    if let Some(handle) = &net_handle {
+                        let _ = handle
+                            .send(NetCommand::SendFolder {
+                                node_id,
+                                transfer_id,
+                                path,
+                                root_name,
+                                archive_size,
+                                total_size,
+                                file_count,
+                                empty_dirs,
                             })
                             .await;
                     }

@@ -16,7 +16,7 @@ use crossterm::event::Event;
 use crate::clipboard::Clipboard;
 use crate::config::Config;
 use crate::key::{ActionId, Key, Keymap, Lookup};
-use crate::net::file::{sanitize_name, MAX_FILE_BYTES};
+use crate::net::file::sanitize_name;
 use crate::net::{ConnectionState, NetEvent};
 use crate::storage::HistoryHandle;
 
@@ -67,6 +67,7 @@ pub struct PendingFileOffer {
     pub node_id: String,
     pub transfer_id: String,
     pub file_name: String,
+    pub folder: Option<crate::net::protocol::FolderMeta>,
 }
 
 pub struct App {
@@ -546,11 +547,13 @@ impl App {
                 transfer_id,
                 file_name,
                 size,
+                folder,
             } => {
                 self.pending_file_offers.push(PendingFileOffer {
                     node_id: node_id.clone(),
                     transfer_id,
                     file_name: file_name.clone(),
+                    folder: folder.clone(),
                 });
                 let _ = addr;
                 let display = self
@@ -563,28 +566,47 @@ impl App {
                     .get(&node_id)
                     .and_then(|peer| (peer.short_no > 0).then(|| format!("no{}", peer.short_no)))
                     .unwrap_or_else(|| naming::short_node_id(&node_id));
-                self.push_system(format!(
-                    "{display} 想发送文件 {file_name}（{}）。输入 /recvfile {short} 接收。",
-                    format_size(size)
-                ));
+                if let Some(folder) = folder {
+                    self.push_system(format!(
+                        "{display} 想发送文件夹 {file_name}（{} 个文件，{}）。输入 /recvfolder {short} 接收。",
+                        folder.file_count,
+                        format_size(folder.total_size)
+                    ));
+                } else {
+                    self.push_system(format!(
+                        "{display} 想发送文件 {file_name}（{}）。输入 /recvfile {short} 接收。",
+                        format_size(size)
+                    ));
+                }
             }
             NetEvent::FileOfferSent {
                 node_id,
                 transfer_id,
                 file_name,
+                folder,
             } => {
                 let peer_name = self.peer_display(&node_id);
                 self.outgoing_files
                     .insert(transfer_id, (node_id, file_name.clone()));
-                self.push_system(format!(
-                    "已向 {peer_name} 发送 {file_name} 的接收请求，等待对方接收（10 分钟内有效）。"
-                ));
+                if let Some(folder) = folder {
+                    self.push_system(format!(
+                        "已向 {peer_name} 发送文件夹 {file_name} 的接收请求（{} 个文件，{}），等待接收（10 分钟内有效）。",
+                        folder.file_count,
+                        format_size(folder.total_size)
+                    ));
+                } else {
+                    self.push_system(format!(
+                        "已向 {peer_name} 发送 {file_name} 的接收请求，等待对方接收（10 分钟内有效）。"
+                    ));
+                }
             }
             NetEvent::FileAccepted {
                 node_id,
                 transfer_ids,
+                is_folder,
             } => {
                 let peer_name = self.peer_display(&node_id);
+                let kind = if is_folder { "文件夹" } else { "文件" };
                 let mut names = Vec::new();
                 self.pending_file_offers.retain(|offer| {
                     if offer.node_id == node_id && transfer_ids.contains(&offer.transfer_id) {
@@ -596,7 +618,7 @@ impl App {
                 });
                 if !names.is_empty() {
                     self.push_system(format!(
-                        "开始接收来自 {peer_name} 的文件：{}…",
+                        "开始接收来自 {peer_name} 的{kind}：{}…",
                         names.join("、")
                     ));
                 } else {
@@ -617,34 +639,51 @@ impl App {
                 transfer_id,
                 file_name,
                 path,
+                is_folder,
             } => {
                 self.pending_file_offers
                     .retain(|offer| offer.transfer_id != transfer_id);
                 let peer_name = self.peer_display(&node_id);
-                self.push_system(format!(
-                    "接收完成：来自 {peer_name} 的 {file_name} 已保存到 {}。",
-                    path.display()
-                ));
+                if is_folder {
+                    self.push_system(format!(
+                        "接收完成：来自 {peer_name} 的文件夹 {file_name} 已保存到 {}。",
+                        path.display()
+                    ));
+                } else {
+                    self.push_system(format!(
+                        "接收完成：来自 {peer_name} 的 {file_name} 已保存到 {}。",
+                        path.display()
+                    ));
+                }
             }
             NetEvent::FileSent {
                 node_id,
                 transfer_id,
                 file_name,
+                is_folder,
             } => {
                 self.outgoing_files.remove(&transfer_id);
                 let peer_name = self.peer_display(&node_id);
-                self.push_system(format!("发送完成：{file_name} 已发送给 {peer_name}。"));
+                if is_folder {
+                    self.push_system(format!(
+                        "发送完成：文件夹 {file_name} 已发送给 {peer_name}。"
+                    ));
+                } else {
+                    self.push_system(format!("发送完成：{file_name} 已发送给 {peer_name}。"));
+                }
             }
             NetEvent::FileFailed {
                 node_id,
                 transfer_id,
                 file_name,
                 reason,
+                is_folder,
             } => {
                 self.remove_file_transfer(&transfer_id);
                 let peer_name = self.peer_display(&node_id);
+                let kind = if is_folder { "文件夹" } else { "文件" };
                 self.push_system(format!(
-                    "文件 {file_name} 传输失败（{peer_name}）：{reason}。"
+                    "{kind} {file_name} 传输失败（{peer_name}）：{reason}。"
                 ));
             }
             NetEvent::FileCancelled {
@@ -652,26 +691,32 @@ impl App {
                 transfer_id,
                 file_name,
                 reason,
+                is_folder,
             } => {
                 self.remove_file_transfer(&transfer_id);
                 let peer_name = self.peer_display(&node_id);
-                self.push_system(format!("{peer_name} 取消了 {file_name} 的传输：{reason}。"));
+                let kind = if is_folder { "文件夹" } else { "文件" };
+                self.push_system(format!(
+                    "{peer_name} 取消了 {kind} {file_name} 的传输：{reason}。"
+                ));
             }
             NetEvent::FileTimedOut {
                 node_id,
                 transfer_id,
                 file_name,
                 outgoing,
+                is_folder,
             } => {
                 self.remove_file_transfer(&transfer_id);
                 let peer_name = self.peer_display(&node_id);
+                let kind = if is_folder { "文件夹" } else { "文件" };
                 if outgoing {
                     self.push_system(format!(
-                        "{file_name} 的发送请求已取消：对方 10 分钟内没有接收。"
+                        "{kind} {file_name} 的发送请求已取消：对方 10 分钟内没有接收。"
                     ));
                 } else {
                     self.push_system(format!(
-                        "{peer_name} 发来的 {file_name} 接收请求已取消：超过 10 分钟没有接收。"
+                        "{peer_name} 发来的 {kind} {file_name} 接收请求已取消：超过 10 分钟没有接收。"
                     ));
                 }
             }
@@ -811,6 +856,14 @@ impl App {
                     self.handle_recv_file(&peer);
                     return;
                 }
+                command::ParsedCommand::SendFolder { path, peer } => {
+                    self.handle_send_folder(&path, &peer);
+                    return;
+                }
+                command::ParsedCommand::RecvFolder { peer } => {
+                    self.handle_recv_folder(&peer);
+                    return;
+                }
                 command::ParsedCommand::SetName { name } => {
                     self.handle_set_name(&name);
                     return;
@@ -871,10 +924,6 @@ impl App {
             );
             return;
         }
-        if metadata.len() > MAX_FILE_BYTES {
-            self.set_status("文件太大（上限 1 GiB），请换一个文件。", StatusKind::Error);
-            return;
-        }
         let name = match path.file_name().and_then(|name| name.to_str()) {
             Some(name) => match sanitize_name(name) {
                 Ok(name) => name,
@@ -913,6 +962,7 @@ impl App {
             path,
             name: name.clone(),
             size: metadata.len(),
+            folder: None,
         });
         self.layers.pop();
         self.set_status(
@@ -958,6 +1008,119 @@ impl App {
         self.dirty = true;
     }
 
+    fn handle_send_folder(&mut self, raw_path: &str, peer_text: &str) {
+        if !self.config.network.enabled {
+            self.set_status("当前是本地模式，不能发送文件夹。", StatusKind::Error);
+            return;
+        }
+        let path = match command::resolve_path(raw_path) {
+            Ok(path) => path,
+            Err(error) => {
+                self.set_status(error, StatusKind::Error);
+                return;
+            }
+        };
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                self.set_status(
+                    format!("无法读取 {}：{error}", path.display()),
+                    StatusKind::Error,
+                );
+                return;
+            }
+        };
+        if !metadata.is_dir() {
+            self.set_status("不是文件夹；文件请用 /sendfile。", StatusKind::Error);
+            return;
+        }
+        let root_name = match path.file_name().and_then(|name| name.to_str()) {
+            Some(name) => match sanitize_name(name) {
+                Ok(name) => name,
+                Err(error) => {
+                    self.set_status(error.to_string(), StatusKind::Error);
+                    return;
+                }
+            },
+            None => {
+                self.set_status("无法确定文件夹名", StatusKind::Error);
+                return;
+            }
+        };
+        let (node_id, peer_name, _addr) = match self.resolve_peer(peer_text) {
+            Ok(peer) => peer,
+            Err(error) => {
+                self.set_status(error, StatusKind::Error);
+                return;
+            }
+        };
+        let archive = match crate::net::file::create_folder_archive(&path) {
+            Ok(archive) => archive,
+            Err(error) => {
+                self.set_status(format!("打包文件夹失败: {error}"), StatusKind::Error);
+                return;
+            }
+        };
+        let transfer_id = uuid::Uuid::new_v4().to_string();
+        let file_count = archive.file_count;
+        self.effects.push(Effect::SendFolder {
+            node_id,
+            transfer_id,
+            path: archive.path,
+            root_name: root_name.clone(),
+            archive_size: archive.archive_size,
+            total_size: archive.total_size,
+            file_count: archive.file_count,
+            empty_dirs: archive.empty_dirs,
+        });
+        self.layers.pop();
+        self.set_status(
+            format!(
+                "正在向 {peer_name} 发送 {root_name} 文件夹（{} 个文件）…",
+                file_count
+            ),
+            StatusKind::Info,
+        );
+        self.dirty = true;
+    }
+
+    fn handle_recv_folder(&mut self, peer_text: &str) {
+        if !self.config.network.enabled {
+            self.set_status("当前是本地模式，不能接收文件夹。", StatusKind::Error);
+            return;
+        }
+        let (node_id, peer_name, _addr) = match self.resolve_peer(peer_text) {
+            Ok(peer) => peer,
+            Err(error) => {
+                self.set_status(error, StatusKind::Error);
+                return;
+            }
+        };
+        let ids: Vec<String> = self
+            .pending_file_offers
+            .iter()
+            .filter(|offer| offer.node_id == node_id && offer.folder.is_some())
+            .map(|offer| offer.transfer_id.clone())
+            .collect();
+        if ids.is_empty() {
+            self.set_status(
+                format!("没有来自 {peer_name} 的待接收文件夹。"),
+                StatusKind::Error,
+            );
+            return;
+        }
+        self.effects.push(Effect::AcceptFiles {
+            node_id,
+            transfer_ids: ids,
+        });
+        self.layers.pop();
+        self.set_status(
+            format!("开始接收来自 {peer_name} 的文件夹…"),
+            StatusKind::Info,
+        );
+        self.dirty = true;
+    }
+
     fn handle_recv_file(&mut self, peer_text: &str) {
         if !self.config.network.enabled {
             self.set_status("当前是本地模式，不能接收文件。", StatusKind::Error);
@@ -973,7 +1136,7 @@ impl App {
         let ids: Vec<String> = self
             .pending_file_offers
             .iter()
-            .filter(|offer| offer.node_id == node_id)
+            .filter(|offer| offer.node_id == node_id && offer.folder.is_none())
             .map(|offer| offer.transfer_id.clone())
             .collect();
         if ids.is_empty() {
@@ -1545,6 +1708,7 @@ mod tests {
             transfer_id: "t1".into(),
             file_name: "a.png".into(),
             size: 1200,
+            folder: None,
         });
         assert_eq!(app.pending_file_offers.len(), 1);
         assert_eq!(app.messages.len(), 1);
@@ -1570,6 +1734,7 @@ mod tests {
             transfer_id: "t1".into(),
             file_name: "a.png".into(),
             size: 1200,
+            folder: None,
         });
         app.handle_net_event(NetEvent::FileOfferReceived {
             node_id: "peer-1".into(),
@@ -1578,6 +1743,7 @@ mod tests {
             transfer_id: "t2".into(),
             file_name: "b.png".into(),
             size: 1300,
+            folder: None,
         });
         app.handle_key(Key::Char('/'));
         type_text(&mut app, "recvfile no1");
