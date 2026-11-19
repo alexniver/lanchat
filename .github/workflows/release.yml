@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Verify tag matches Cargo version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(cargo pkgid | sed 's/.*#//')"
+          echo "tag=$tag cargo=$version"
+          test "$tag" = "$version"
+
+      - name: Test
+        run: cargo test --locked --target ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo pkgid | sed 's/.*#//')"
+          asset="lanchat-v${version}-${{ matrix.target }}"
+          mkdir -p dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            binary="target/${{ matrix.target }}/release/lanchat.exe"
+            7z a "dist/${asset}.zip" "$binary" README.md CHANGELOG.md LICENSE >/dev/null
+          else
+            binary="target/${{ matrix.target }}/release/lanchat"
+            mkdir -p "dist/${asset}"
+            cp "$binary" "dist/${asset}/lanchat"
+            cp README.md CHANGELOG.md LICENSE "dist/${asset}/"
+            tar -C "dist/${asset}" -czf "dist/${asset}.tar.gz" .
+            rm -rf "dist/${asset}"
+          fi
+          echo "Packaged dist/${asset}.${{ matrix.archive }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lanchat-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: release-assets/*

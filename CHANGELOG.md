@@ -2,6 +2,22 @@
 
 本文件记录 LanChat 的版本变化。README 只保留当前版本的介绍、安装和使用方法。
 
+## [0.1.10] - 2026-11-20
+
+### Added
+
+- GitHub Actions `ci.yml`：Linux/Windows/macOS 格式、Clippy、测试、release 构建。
+- GitHub Actions `release.yml`：tag/手动触发，手写 matrix 构建 Linux/Windows/macOS 产物。
+- Linux x86_64、Windows x86_64、macOS Intel、macOS Apple Silicon 归档。
+- `SHA256SUMS` 和 draft GitHub Release 上传。
+- MIT `LICENSE` 文件，并打入发布归档。
+
+### Changed
+
+- 版本号更新为 0.1.10。
+- Release 使用 `macos-15-intel` 构建 Intel macOS，macOS 14 构建 Apple Silicon。
+- README 增加预编译版本说明；发布细节见 `docs/0.1.10/`。
+
 ## [0.1.9] - 2026-11-20
 
 ### Added

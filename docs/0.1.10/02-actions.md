@@ -1,6 +1,6 @@
 # GitHub Actions 设计
 
-> 状态：讨论中
+> 状态：已实现
 > 不是实际 workflow 文件；落地时写入 `.github/workflows/release.yml`。
 
 ## 1. 触发
@@ -38,7 +38,7 @@ strategy:
       - os: windows-2022
         target: x86_64-pc-windows-msvc
         archive: zip
-      - os: macos-13          # Intel
+      - os: macos-15-intel    # Intel
         target: x86_64-apple-darwin
         archive: tar.gz
       - os: macos-14          # Apple Silicon

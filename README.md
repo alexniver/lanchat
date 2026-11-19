@@ -1,4 +1,4 @@
-# LanChat 0.1.9
+# LanChat 0.1.10
 
 LanChat 是一个 **Helix 风格键位、键盘优先的局域网终端聊天工具**。它运行在终端里，不需要中心服务器，同一局域网内的节点通过 mDNS 自动发现，再用 TCP 直连聊天和传递文件。
 
@@ -61,6 +61,12 @@ cargo build --release
 cargo install --path . --locked
 lanchat --version
 ```
+
+### 预编译版本
+
+GitHub Releases 提供 Linux、Windows、macOS 的预编译压缩包和 `SHA256SUMS`。下载对应平台的归档，解压后运行 `lanchat`（Windows 为 `lanchat.exe`）。
+
+当前首版发布流程使用手写 GitHub Actions matrix；构建/发布细节见 [docs/0.1.10](docs/0.1.10/README.md)。
 
 ### 开发模式运行
 
@@ -420,10 +426,9 @@ cargo build --release
 
 旧版实现保留在 [`old/`](old/)，不参与编译。
 
-- 当前需求：[docs/0.1.9/README.md](docs/0.1.9/README.md)
-- Release 构建讨论：[docs/0.1.10/README.md](docs/0.1.10/README.md)
+- 当前需求：[docs/0.1.10/README.md](docs/0.1.10/README.md)
 - 版本变化：[CHANGELOG.md](CHANGELOG.md)
 
 ## 许可证
 
-MIT（见 `Cargo.toml`）。
+MIT（见 [LICENSE](LICENSE)）。

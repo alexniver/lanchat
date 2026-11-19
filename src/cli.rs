@@ -58,7 +58,7 @@ where
 }
 
 pub fn help_text() -> &'static str {
-    "lanchat 0.1.9 — 终端聊天 TUI\n\
+    "lanchat 0.1.10 — 终端聊天 TUI\n\
 \n\
 用法: lanchat [选项]\n\
 \n\
