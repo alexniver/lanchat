@@ -395,6 +395,7 @@ cargo build --release
 旧版实现保留在 [`old/`](old/)，不参与编译。
 
 - 当前需求：[docs/0.1.8/README.md](docs/0.1.8/README.md)
+- 下一版需求（已确认，待实现）：[docs/0.1.9/README.md](docs/0.1.9/README.md)
 - 版本变化：[CHANGELOG.md](CHANGELOG.md)
 
 ## 许可证
