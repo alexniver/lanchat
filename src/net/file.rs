@@ -571,7 +571,7 @@ pub fn available_space(path: &Path) -> Result<u64> {
         if unsafe { libc::statvfs(path.as_ptr(), &mut stat) } != 0 {
             return Err(std::io::Error::last_os_error().into());
         }
-        Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
+        Ok(as_u64(stat.f_bavail).saturating_mul(as_u64(stat.f_frsize)))
     }
     #[cfg(windows)]
     {
@@ -604,6 +604,11 @@ pub fn available_space(path: &Path) -> Result<u64> {
         let _ = path;
         bail!("当前平台不支持磁盘空间检测")
     }
+}
+
+#[cfg(unix)]
+fn as_u64(value: impl Into<u64>) -> u64 {
+    value.into()
 }
 
 pub fn required_for_transfer(bytes: u64) -> u64 {
