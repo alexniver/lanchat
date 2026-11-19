@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
 use crossterm::cursor::Show;
-use crossterm::event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -26,12 +26,10 @@ impl TerminalGuard {
         enable_raw_mode()?;
         RESTORED.store(false, Ordering::SeqCst);
         let mut stdout = io::stdout();
-        if let Err(error) = execute!(
-            stdout,
-            EnterAlternateScreen,
-            EnableBracketedPaste,
-            DisableMouseCapture
-        ) {
+        // Do not call DisableMouseCapture here: on Windows crossterm requires
+        // mouse capture to have been enabled first, otherwise it fails with
+        // "Initial console modes not set". Mouse capture is off by default.
+        if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableBracketedPaste) {
             let _ = disable_raw_mode();
             RESTORED.store(true, Ordering::SeqCst);
             return Err(error.into());

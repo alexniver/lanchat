@@ -12,6 +12,10 @@
 - `SHA256SUMS` 和 draft GitHub Release 上传。
 - MIT `LICENSE` 文件，并打入发布归档。
 
+### Fixed
+
+- 修复 Windows 启动时报 `Initial console modes not set`：不再在未启用鼠标捕获时调用 `DisableMouseCapture`。
+
 ### Changed
 
 - 版本号更新为 0.1.10。
